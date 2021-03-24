@@ -8,6 +8,7 @@ import scipy
 from scipy import ndimage
 from scipy import integrate
 import numpy as np
+import pandas as pd
 import datetime
 import time
 import matplotlib
@@ -221,9 +222,9 @@ def get_coords_range(x, x_min_val, x_max_val, add_ghost):
     return x_min, x_max
     
     
-def get_essi_meta(essi_fname, verbose):
+def get_essi_meta(ssi_fname, verbose):
     # Get parameter values from HDF5 data
-    essiout = h5py.File(essi_fname, 'r')
+    essiout = h5py.File(ssi_fname, 'r')
     h  = essiout['ESSI xyz grid spacing'][0]
     x0 = essiout['ESSI xyz origin'][0]
     y0 = essiout['ESSI xyz origin'][1]
@@ -240,10 +241,10 @@ def get_essi_meta(essi_fname, verbose):
     
     return x0, y0, z0, h, nx, ny, nz, nt, dt, timeseq
 
-def get_essi_data_btw_step(essi_fname, start, end, verbose):
+def get_essi_data_btw_step(ssi_fname, start, end, verbose):
     stime = float(time.perf_counter())
 
-    essiout = h5py.File(essi_fname, 'r')
+    essiout = h5py.File(ssi_fname, 'r')
     nt = essiout['vel_0 ijk layout'].shape[0]
     if start < 0:
         print('start cannot be negative!', start)
@@ -261,10 +262,10 @@ def get_essi_data_btw_step(essi_fname, start, end, verbose):
         print('Read from ESSI file took %.2f seconds.' % (etime-stime))
     return vel_0_all, vel_1_all, vel_2_all
 
-def get_essi_data_range(essi_fname, xstart, xend, ystart, yend, zstart, zend, verbose):
+def get_essi_data_range(ssi_fname, xstart, xend, ystart, yend, zstart, zend, verbose):
     stime = float(time.perf_counter())
 
-    essiout = h5py.File(essi_fname, 'r')
+    essiout = h5py.File(ssi_fname, 'r')
 
     vel_0_all = essiout['vel_0 ijk layout'][:, xstart:xend, ystart:yend, zstart:zend]
     vel_1_all = essiout['vel_1 ijk layout'][:, xstart:xend, ystart:yend, zstart:zend]
@@ -276,18 +277,6 @@ def get_essi_data_range(essi_fname, xstart, xend, ystart, yend, zstart, zend, ve
     if verbose:
         print('Read from ESSI file took %.2f seconds.' % (etime-stime))
     return vel_0_all, vel_1_all, vel_2_all  
-
-def interpolate(data, x, y, z, order):
-    if len(x) != len(y) or len(x) != len(z):
-        print('Error with x, y, z input, length not equal (%d, %d, %d)!' % (len(y), len(x), len(z)))
-        return
-    if order < 0 or order > 5:
-        print('Order can only be between 0 and 5! (%d)' % order)
-        return    
-    
-    output = ndimage.map_coordinates(data, [x, y, z], order=order, mode='constant')
-    #print(output.shape)
-    return output
 
 def read_input_coord_txt(fname, verbose):
     f = open(fname, 'r')
@@ -411,7 +400,7 @@ def write_to_hdf5_range_2d(h5_fname, gname, dname, data, mystart, myend):
     dset[mystart:myend,:] = data[:,:]
     h5file.close()
     
-def create_hdf5(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
+def create_hdf5_opensees(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
     h5file = h5py.File(h5_fname, 'w')
     data_grp = h5file.create_group('DRM_Data')
     
@@ -438,6 +427,22 @@ def create_hdf5(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dn
     
     h5file.close()
     
+def create_hdf5_essi(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
+    h5file = h5py.File(h5_fname, 'r+')    
+    
+    if gen_vel:
+        dset = h5file.create_dataset('Velocity', (ncoord*3, nstep), dtype='f4')
+    if gen_acc:        
+        dset = h5file.create_dataset('Accelerations', (ncoord*3, nstep), dtype='f4')
+    if gen_dis:        
+        dset = h5file.create_dataset('Displacements', (ncoord*3, nstep), dtype='f4')    
+        
+    timeseq = np.linspace(0, nstep*dt, nstep+1)    
+
+    h5file.create_dataset('Time', data=timeseq, dtype='i4')
+    
+    h5file.close()
+    
 def coord_to_chunkid(x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z):
     val = int(np.floor(x/chk_x)*nchk_y*nchk_z + np.floor(y/chk_y)*nchk_z + np.floor(z/chk_z))
     #print('coord_to_chunkid:', x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, val)
@@ -450,10 +455,13 @@ def chunkid_to_start(cid, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z):
     z = cid - y*nchk_z - x*nchk_z*nchk_y
     return int(x*chk_x), int(y*chk_y), int(z*chk_z)
 
-def get_chunk_size(essi_fname):
-    fid = h5py.File(essi_fname, 'r')
-    dims = fid['vel_0 ijk layout'].chunks    
+def get_chunk_size(ssi_fname):
+    fid = h5py.File(ssi_fname, 'r')
+    dims = fid['vel_0 ijk layout'].chunks
+    if not dims:
+        dims = fid['vel_0 ijk layout'].shape
     fid.close()
+    #print('Chunk size:', dims)
     return int(dims[0]), int(dims[1]), int(dims[2]), int(dims[3])
     
 def get_nchunk_from_coords(x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z):
@@ -491,8 +499,8 @@ def allocate_neighbor_coords_8(data_dict, x, y, z, n):
                 
     return nadd
 
-def read_hdf5_by_chunk(essi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose):
-    fid = h5py.File(essi_fname, 'r')
+def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose):
+    fid = h5py.File(ssi_fname, 'r')
     dset_name = 'vel_' + str(int(comp)) + ' ijk layout'
     for cids_iter in cids_dict:
         # Read chunk
@@ -504,7 +512,7 @@ def read_hdf5_by_chunk(essi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk
             chk_data = fid[dset_name][chk_t*start_t:chk_t*(start_t+1), start_x:start_x+chk_x, start_y:start_y+chk_y, start_z:start_z+chk_z]
             endtime = time.time()
             if verbose: 
-                print('Rank', mpi_rank, 'read chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
+                print('Rank', mpi_rank, 'read', dset_name, 'chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
                 #sys.stdout.flush()
 
             starttime = time.time()
@@ -542,9 +550,9 @@ def linear_interp(data_dict, x, y, z):
     result = ((c000 * (1-xd) + c100 * xd) * (1-yd) + (c010 * (1-xd) + c110 * xd) * yd) * (1-zd) + ((c001 * (1-xd) + c101 * xd) * (1-yd) + (c011 * (1-xd) + c111 * xd) * yd) * zd
     return result
 
-def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname):
+def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
     # Read ESSI metadata
-    essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, essi_nt, essi_dt, essi_timeseq = get_essi_meta(essi_fname, verbose)
+    essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, essi_nt, essi_dt, essi_timeseq = get_essi_meta(ssi_fname, verbose)
     essi_x_len_max = (essi_nx-1) * essi_h
     essi_y_len_max = (essi_ny-1) * essi_h
     essi_z_len_max = (essi_nz-1) * essi_h
@@ -556,8 +564,9 @@ def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user
         print('\nESSI origin x0, y0, z0, h: ', essi_x0, essi_y0, essi_z0, essi_h)
         print('ESSI origin nx, ny, nz, nt, dt: ', essi_nx, essi_ny, essi_nz, essi_nt, essi_dt)
         print('ESSI max len x, y, z: ', essi_x_len_max, essi_y_len_max, essi_z_len_max)
+        print('Reference coordinate:', ref_coord)
         print(' ')
-        print('Generate DRM file with timestep between', start_ts, 'and', end_ts)
+        print('Generate output file with timesteps between', start_ts, 'and', end_ts, 'in', output_format, 'format')
 
     # Convert user coordinate to sw4 coordinate, relative to ESSI domain (subset of SW4 domain)
     user_essi_x, user_essi_y, user_essi_z = convert_to_essi_coord(coord_sys, user_x, user_y, user_z, ref_coord, essi_x_len_max, essi_y_len_max, essi_z_len_max)
@@ -577,9 +586,7 @@ def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user
             print('Only generate the plots of input nodes')
         exit(0)
 
-    if mpi_rank == 0:
-        create_hdf5(output_fname, n_coord, essi_nt, end_ts-start_ts, gen_vel, gen_acc, gen_dis, extra_dname)
-        
+    
     # Convert to array location (spacing is 1), floating-point
     coord_x = user_essi_x / essi_h
     coord_y = user_essi_y / essi_h
@@ -596,13 +603,13 @@ def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user
                 print('Use spline interpolation.')
             break    
             
-    print('Force to noto interpolate')
-    do_interp = False
+    # print('Force to not interpolate')
+    # do_interp = False
 
     #for i in range(0, len(user_essi_x)):
     #    print('(%.2f, %.2f, %.2f)' % (coord_x[i], coord_y[i], coord_z[i]))
 
-    chk_t, chk_x, chk_y, chk_z = get_chunk_size(essi_fname)
+    chk_t, chk_x, chk_y, chk_z = get_chunk_size(ssi_fname)
     if chk_t <= 0 or chk_x <= 0 or chk_y <= 0 or chk_z <= 0:
         print('Error getting chunk size from essi file', chk_t, chk_x, chk_y, chk_z)
         
@@ -693,7 +700,6 @@ def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user
     my_user_coordinates.resize(my_ncoord[0], 3)
     is_boundary.resize(my_ncoord[0])
     
-    
     comm = MPI.COMM_WORLD
     all_ncoord = np.empty(mpi_size, dtype='int')
     comm.Allgather([my_ncoord, MPI.INT], [all_ncoord, MPI.INT])
@@ -704,9 +710,9 @@ def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user
 
     if my_ncoord[0] > 0:
     # Read data by chunk and assign to read_coords_vel_012
-        read_hdf5_by_chunk(essi_fname, read_coords_vel_0, 0, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
-        read_hdf5_by_chunk(essi_fname, read_coords_vel_1, 1, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
-        read_hdf5_by_chunk(essi_fname, read_coords_vel_2, 2, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+        read_hdf5_by_chunk(ssi_fname, read_coords_vel_0, 0, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+        read_hdf5_by_chunk(ssi_fname, read_coords_vel_1, 1, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+        read_hdf5_by_chunk(ssi_fname, read_coords_vel_2, 2, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
 
     if verbose:
         print('Coordinate offset:', ref_coord)
@@ -718,26 +724,7 @@ def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user
         my_offset += all_ncoord[i]
     if verbose:        
         print('Rank %d offset %d ' % (mpi_rank, my_offset))
-    
-    # Write coordinates and boundary nodes (file created previously), in serial with baton passing
-    comm.Barrier()
-    if mpi_rank == 0:
-        if my_ncoord[0] > 0:
-            write_to_hdf5_range_2d(output_fname, 'DRM_Data', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
-            write_to_hdf5_range_1d(output_fname, 'DRM_Data', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
-        if mpi_size > 1:
-            comm.send(my_ncoord, dest=1, tag=11)
-    else:
-        data = comm.recv(source=mpi_rank-1, tag=11)
-        if my_ncoord[0] > 0:
-            if verbose:
-                print('Rank %d write xyz/internal data' % mpi_rank)
-            write_to_hdf5_range_2d(output_fname, 'DRM_Data', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
-            write_to_hdf5_range_1d(output_fname, 'DRM_Data', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])    
-        if mpi_rank != mpi_size-1:
-            comm.send(my_ncoord, dest=mpi_rank+1, tag=11)            
-    comm.Barrier()    
-    
+
     output_acc_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')
     output_dis_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')   
     output_vel_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')    
@@ -809,60 +796,105 @@ def generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user
                 output_acc_all[iter_count*3+0, :] = np.gradient(read_coords_vel_0[vel_iter][:], essi_dt, axis=0)
                 output_acc_all[iter_count*3+1, :] = np.gradient(read_coords_vel_0[vel_iter][:], essi_dt, axis=0)
                 output_acc_all[iter_count*3+2, :] = np.gradient(read_coords_vel_2[vel_iter][:], essi_dt, axis=0)
-                if iter_count == 0:
-                    print('acc_0 for', vel_iter, 'is:', output_acc_all[iter_count,:])                
+                #if iter_count == 0:
+                #    print('acc_0 for', vel_iter, 'is:', output_acc_all[iter_count,:])                
             if gen_dis:
                 output_dis_all[iter_count*3+0, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_0[vel_iter][:], dx=essi_dt, initial=0, axis=0)
                 output_dis_all[iter_count*3+1, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_1[vel_iter][:], dx=essi_dt, initial=0, axis=0)
                 output_dis_all[iter_count*3+2, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_2[vel_iter][:], dx=essi_dt, initial=0, axis=0)   
-                if iter_count == 0:
-                    print('dis_0 for', vel_iter, 'is:', output_dis_all[iter_count,:])                
+                #if iter_count == 0:
+                #    print('dis_0 for', vel_iter, 'is:', output_dis_all[iter_count,:])                
             if gen_vel:
                 output_vel_all[iter_count*3+0, :] = read_coords_vel_0[vel_iter][:]
                 output_vel_all[iter_count*3+1, :] = read_coords_vel_1[vel_iter][:]
                 output_vel_all[iter_count*3+2, :] = read_coords_vel_2[vel_iter][:]
                 # debug
-                if iter_count == 0:
-                    print('vel_0 for', vel_iter, 'is:', read_coords_vel_0[vel_iter])
+                #if iter_count == 0:
+                #    print('vel_0 for', vel_iter, 'is:', read_coords_vel_0[vel_iter])
             iter_count += 1
         #end for
         print('Written', iter_count, 'coordinates')
     # end else no interpolation
- 
+     
+    # Write coordinates and boundary nodes (file created previously), in serial with baton passing
     comm.Barrier()
+    
+    if output_format == "OpenSees":
+        if mpi_rank == 0:
+            create_hdf5_opensees(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
 
-    if mpi_rank == 0:
-        if my_ncoord[0] > 0:
-            print('Rank', mpi_rank, 'start to write data')
-            if gen_acc:
-                write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
-            if gen_dis:
-                write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
-            if gen_vel:
-                write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
-        if mpi_size > 1:
-            comm.send(my_ncoord, dest=1, tag=111)
+            if my_ncoord[0] > 0:
+                write_to_hdf5_range_2d(output_fname, 'DRM_Data', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
+                write_to_hdf5_range_1d(output_fname, 'DRM_Data', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
+                if gen_acc:
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_dis:
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_vel:
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+            if mpi_size > 1:
+                comm.send(my_ncoord, dest=1, tag=11)
+        else:
+            data = comm.recv(source=mpi_rank-1, tag=11)
+            if my_ncoord[0] > 0:
+                if verbose:
+                    print('Rank', mpi_rank, 'start to write data')
+                write_to_hdf5_range_2d(output_fname, 'DRM_Data', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
+                write_to_hdf5_range_1d(output_fname, 'DRM_Data', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])    
+
+                if gen_acc:
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_dis:
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_vel:
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+            if mpi_rank != mpi_size-1:
+                comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
+                
+    elif output_format == "ESSI":
+        if mpi_rank == 0:
+            create_hdf5_essi(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
+            # Write to the template file
+            if my_ncoord[0] > 0:
+                write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), my_offset, (my_offset+my_ncoord[0])*3)
+                write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
+                if gen_acc:
+                    write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_dis:
+                    write_to_hdf5_range(output_fname, '/', 'Displacements', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_vel:
+                    write_to_hdf5_range(output_fname, '/', 'Velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)                
+                
+            if mpi_size > 1:
+                comm.send(my_ncoord, dest=1, tag=111)
+        else:
+            data = comm.recv(source=mpi_rank-1, tag=111)
+            if my_ncoord[0] > 0:
+                write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), my_offset, (my_offset+my_ncoord[0])*3)
+                write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
+                if gen_acc:
+                    write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_dis:
+                    write_to_hdf5_range(output_fname, '/', 'Displacements', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_vel:
+                    write_to_hdf5_range(output_fname, '/', 'Velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)              
+            if mpi_rank != mpi_size-1:
+                comm.send(my_ncoord, dest=mpi_rank+1, tag=111) 
+                
     else:
-        data = comm.recv(source=mpi_rank-1, tag=111)
-        if my_ncoord[0] > 0:
-            print('Rank', mpi_rank, 'start to write data')
-            if gen_acc:
-                write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
-            if gen_dis:
-                write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
-            if gen_vel:
-                write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
-
-        if mpi_rank != mpi_size-1:
-            comm.send(my_ncoord, dest=mpi_rank+1, tag=111)            
-
+        if mpi_rank == 0:
+            print('Invalid output format', output_format)
+            
+    comm.Barrier()
+    if mpi_rank == 0:
+        print('Rank', mpi_rank, 'Finished writing data')    
     return
     
-def convert_drm(drm_fname, essi_fname, ref_coord, start_ts, end_ts, plot_only, mpi_rank, mpi_size, verbose):
+def convert_drm(drm_fname, ssi_fname, ref_coord, start_ts, end_ts, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  DRM [%s]' %drm_fname)
-        print('Input ESSI [%s]' %essi_fname)
+        print('Input ESSI [%s]' %ssi_fname)
 
     output_fname = drm_fname + '.h5drm'
     coord_sys = ['y', 'x', '-z']
@@ -876,16 +908,18 @@ def convert_drm(drm_fname, essi_fname, ref_coord, start_ts, end_ts, plot_only, m
     gen_dis = True
     gen_acc = True
     extra_dname = 'internal'
-    generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname)
     
-    if mpi_rank == 0:
-        print('End time:', datetime.datetime.now().time())
+    output_format = 'OpenSees'
+
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format)
+    
+    return
         
-def convert_csv(csv_fname, essi_fname, plotonly, mpi_rank, mpi_size, verbose):
+def convert_csv(csv_fname, ssi_fname, plotonly, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  CSV [%s]' %csv_fname)
-        print('Input ESSI [%s]' %essi_fname)
+        print('Input ESSI [%s]' %ssi_fname)
         
     df = pd.read_csv(csv_fname)
     # reference point, which is the ESSI/OPS origin in the SW4 coordinate system
@@ -916,12 +950,74 @@ def convert_csv(csv_fname, essi_fname, plotonly, mpi_rank, mpi_size, verbose):
     
     if mpi_rank == 0:
         print('Found motions for %i nodes...' % (n_nodes))
-        
-    generate_acc_dis_time(essi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname)
     
+    output_format = 'OpenSees'
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, node_x, node_y, node_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    
+    return    
+
+def dframeToDict(dFrame):
+    dFrame = list(dFrame.iterrows())
+    return {i[1].to_list()[0] : i[1].to_list()[1] for i in dFrame}
+
+def convert_template(csv_fname, template_fname, ssi_fname, start_ts, end_ts, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
-        print('End time:', datetime.datetime.now().time())
+        print('Start time:', datetime.datetime.now().time())
+        print('Input  CSV [%s]' %csv_fname)
+        print('Input ESSI [%s]' %ssi_fname)
         
+    sw4ToESSI_params = dframeToDict(pd.read_csv(csv_fname))
+    sw4_i_start = sw4ToESSI_params["sw4_i_start"]
+    sw4_i_end   = sw4ToESSI_params["sw4_i_end"]
+    sw4_j_start = sw4ToESSI_params["sw4_j_start"]
+    sw4_j_end   = sw4ToESSI_params["sw4_j_end"]
+    sw4_k_start = sw4ToESSI_params["sw4_k_start"]
+    sw4_k_end   = sw4ToESSI_params["sw4_k_end"]    
+    essi_x_start = sw4ToESSI_params["essi_x_start"]
+    essi_x_end   = sw4ToESSI_params['essi_x_end']
+    essi_y_start = sw4ToESSI_params["essi_y_start"]
+    essi_y_end   = sw4ToESSI_params["essi_y_end"]
+    essi_z_start = sw4ToESSI_params["essi_z_start"]
+    essi_z_end   = sw4ToESSI_params["essi_z_end"]
+       
+    # reference point, which is the ESSI/OPS origin in the SW4 coordinate system
+    ref_coord[0] = essi_x_start
+    ref_coord[1] = essi_y_start
+    ref_coord[2] = essi_z_end
+        
+    coord_sys = ['y', 'x', '-z']
+    gen_vel = True
+    gen_dis = True
+    gen_acc = True 
+    extra_dname = 'Is Boundary Node'
+
+    # output motion for selected OpenSees nodes
+    output_fname = template_fname
+    template_file = h5py.File(template_fname)
+    coordinates = template_file['Coordinates'][:]
+    
+    node_tags = template_file['DRM Nodes'][:].tolist()
+    n_coord = len(node_tags)
+    user_x = np.zeros(n_coord)
+    user_y = np.zeros(n_coord)
+    user_z = np.zeros(n_coord)
+    for i in range(0, n_coord):
+        user_x[i] = coordinates[i*3]
+        user_y[i] = coordinates[i*3+1]
+        user_z[i] = coordinates[i*3+2]
+        
+    template_file.close()
+    
+    if verbose and mpi_rank == 0:
+        print('Done read %d coordinates, first is (%d, %d, %d), last is (%d, %d, %d)' % (n_coord, user_x[0], user_y[0], user_z[0], user_x[-1], user_y[-1], user_z[-1]))
+        print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x), np.max(user_x), np.min(user_y), np.max(user_y), np.min(user_z), np.max(user_z)) )
+        print('Start/end timestep', start_ts, end_ts)
+        
+    output_format = 'ESSI'
+        
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    return    
+
 if __name__ == "__main__":
     
     os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
@@ -930,9 +1026,11 @@ if __name__ == "__main__":
     plotonly=False
     use_drm=False
     use_csv=False
-    essi_fname=''
+    use_template=False
+    ssi_fname=''
     drm_fname=''
     csv_fname=''
+    template_fname=''
     ref_coord=np.zeros(3)
     start_ts=int(0)
     end_ts=int(0)
@@ -941,9 +1039,10 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--csv", help="full path to the CSV setting file", default="")
     parser.add_argument("-d", "--drm", help="full path to the DRM file with node coordinates", default="")
     parser.add_argument("-e", "--essi", help="full path to the SW4 ESSI output file", default="")
+    parser.add_argument("-t", "--template", help="full path to the ESSI template file with node coordinates", default="")
     parser.add_argument("-p", "--plotonly", help="only generate plots of the input nodes", action="store_true")
     parser.add_argument("-r", "--reference", help="reference node coordinate offset, default 0 0 0", nargs='+', type=float)
-    parser.add_argument("-t", "--trange", help="timestep range, default 0 total_steps", nargs='+', type=int)
+    parser.add_argument("-s", "--steprange", help="timestep range, default 0 total_steps", nargs='+', type=int)
     parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
     args = parser.parse_args()  
     
@@ -957,34 +1056,36 @@ if __name__ == "__main__":
     if args.csv:
         csv_fname=args.csv
         use_csv=True
+    if args.template:
+        template_fname=args.template
+        use_template=True
     if args.essi:
-        essi_fname=args.essi
+        ssi_fname=args.essi
     if args.reference:
         ref_coord[0]=args.reference[0]
         ref_coord[1]=args.reference[1]
         ref_coord[2]=args.reference[2]
-    if args.trange:
-        start_ts=int(args.trange[0])
-        end_ts=int(args.trange[1])
+    if args.steprange:
+        start_ts=int(args.steprange[0])
+        end_ts=int(args.steprange[1])
         
     comm = MPI.COMM_WORLD
     mpi_size = comm.Get_size()
     mpi_rank = comm.Get_rank()
-         
-    #drm_fname = '/global/cscratch1/sd/houhun/essi/3dtest/DRM_input_Model27.hdf5'
-    #essi_fname = '/global/cscratch1/sd/houhun/essi/3dtest/3dLocation1Parallel.cycle=00000.essi' 
-    # For 107346node        ref_coord = [24, 24, 24]
-    # For 40610node 0722    ref_coord = [-320, -320, 96]
-    # For 3dtest            ref_coord = [24, 24, -64] 
-    
-    if drm_fname == '' and csv_fname == '':
+        
+    if drm_fname == '' and csv_fname == '' and template_fname == '':
         print('Error, no node coordinate input file is provided, exit...')
         exit(0)
-    if essi_fname == '':
+    if ssi_fname == '':
         print('Error, no SW4 ESSI output file is provided, exit...')
         exit(0) 
         
     if use_drm:
-        convert_drm(drm_fname, essi_fname, ref_coord, start_ts, end_ts, plotonly, mpi_rank, mpi_size, verbose)
-    elif use_csv:
-        convert_csv(csv_fname, essi_fname, plotonly, mpi_rank, mpi_size, verbose)
+        convert_drm(drm_fname, ssi_fname, ref_coord, start_ts, end_ts, plotonly, mpi_rank, mpi_size, verbose)
+    elif use_csv and not use_template:
+        convert_csv(csv_fname, ssi_fname, plotonly, mpi_rank, mpi_size, verbose)
+    elif use_csv and use_template:
+        convert_template(csv_fname, template_fname, ssi_fname, start_ts, end_ts, plotonly, mpi_rank, mpi_size, verbose)
+        
+    if mpi_rank == 0:
+        print('End time:', datetime.datetime.now().time())
