@@ -509,7 +509,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             start_x, start_y, start_z = chunkid_to_start(cids_iter, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
             #print('Read chunk cid =', cids_iter, start_x, chk_x, start_y, chk_y, start_z, chk_z)
             starttime = time.time()
-            chk_data = fid[dset_name][chk_t*start_t:chk_t*(start_t+1), start_x:start_x+chk_x, start_y:start_y+chk_y, start_z:start_z+chk_z]
+            chk_data = fid[dset_name][int(chk_t*start_t):int(chk_t*(start_t+1)), int(start_x):int(start_x+chk_x), int(start_y):int(start_y+chk_y), int(start_z):int(start_z+chk_z)]
             endtime = time.time()
             if verbose: 
                 print('Rank', mpi_rank, 'read', dset_name, 'chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
