@@ -121,9 +121,12 @@ def plot_cube(cube_definition, x, y, z, view):
     xyzalpha = 0.1
     markersize=2
 
-    xs = x + cube_definition[0][1]
-    ys = y + cube_definition[0][0]
-    zs = z + cube_definition[0][2]
+    # xs = x + cube_definition[0][1]
+    # ys = y + cube_definition[0][0]
+    # zs = z + cube_definition[0][2]
+    xs = x
+    ys = y
+    zs = z
     
     #print(xs)
     #print(ys)
@@ -426,7 +429,28 @@ def create_hdf5_opensees(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis,
     dset = data_grp.create_dataset('tstart', data=tstart, dtype='f8')
     
     h5file.close()
+
+def create_hdf5_csv(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
+    h5file = h5py.File(h5_fname, 'w')
+
+    if gen_vel:
+        dset = h5file.create_dataset('velocity', (ncoord*3, nstep), dtype='f4')
+    if gen_acc:        
+        dset = h5file.create_dataset('acceleration', (ncoord*3, nstep), dtype='f4')
+    if gen_dis:        
+        dset = h5file.create_dataset('displacement', (ncoord*3, nstep), dtype='f4')
+
+    dset = h5file.create_dataset(extra_dname, (ncoord,), dtype='i4')
+    dset = h5file.create_dataset('xyz', (ncoord, 3), dtype='f4')
     
+    dset = h5file.create_dataset('dt', data=dt, dtype='f8')
+    tstart = 0.0
+    tend = nstep*dt
+    dset = h5file.create_dataset('tend', data=tend, dtype='f8')
+    dset = h5file.create_dataset('tstart', data=tstart, dtype='f8')
+    
+    h5file.close()
+
 def create_hdf5_essi(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
     h5file = h5py.File(h5_fname, 'r+')    
     
@@ -588,10 +612,13 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_
 
     
     # Convert to array location (spacing is 1), floating-point
-    coord_x = user_essi_x / essi_h
-    coord_y = user_essi_y / essi_h
-    coord_z = user_essi_z / essi_h    
-            
+    # coord_x = user_essi_x / essi_h
+    # coord_y = user_essi_y / essi_h
+    # coord_z = user_essi_z / essi_h  
+    coord_x = (user_essi_x - essi_x0) / essi_h
+    coord_y = (user_essi_y - essi_y0) / essi_h
+    coord_z = (user_essi_z - essi_z0) / essi_h  
+    
     # Check if we actually need interpolation
     ghost_cell = 0
     do_interp = False
@@ -626,11 +653,14 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_
     while(nchk < 0.5*mpi_size):
         if ntry > 0:
             if ntry % 3 == 1 and chk_x % 2 == 0:
-                chk_x /= 2
+                # chk_x /= 2
+                chk_x = int(chk_x/2)
             elif ntry % 3 == 2 and chk_y % 2 == 0:
-                chk_y /= 2     
+                # chk_y /= 2     
+                chk_y = int(chk_y/2)    
             elif ntry % 3 == 0 and chk_z % 2 == 0:
-                chk_z /= 2  
+                # chk_z /= 2  
+                chk_z = int(chk_z/2)
                 
         # Find how many chunks the current 
         nchk, cids_dict = get_nchunk_from_coords(coord_x, coord_y, coord_z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
@@ -850,7 +880,39 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_
                     write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
-                
+
+    if output_format == "csv":
+        if mpi_rank == 0:
+            create_hdf5_csv(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
+
+            if my_ncoord[0] > 0:
+                write_to_hdf5_range_2d(output_fname, '/', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
+                write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
+                if gen_acc:
+                    write_to_hdf5_range(output_fname, '/', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_dis:
+                    write_to_hdf5_range(output_fname, '/', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_vel:
+                    write_to_hdf5_range(output_fname, '/', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+            if mpi_size > 1:
+                comm.send(my_ncoord, dest=1, tag=11)
+        else:
+            data = comm.recv(source=mpi_rank-1, tag=11)
+            if my_ncoord[0] > 0:
+                if verbose:
+                    print('Rank', mpi_rank, 'start to write data')
+                write_to_hdf5_range_2d(output_fname, '/', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
+                write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])    
+
+                if gen_acc:
+                    write_to_hdf5_range(output_fname, '/', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_dis:
+                    write_to_hdf5_range(output_fname, '/', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                if gen_vel:
+                    write_to_hdf5_range(output_fname, '/', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+            if mpi_rank != mpi_size-1:
+                comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
+
     elif output_format == "ESSI":
         if mpi_rank == 0:
             create_hdf5_essi(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
@@ -904,7 +966,7 @@ def convert_drm(drm_fname, ssi_fname, ref_coord, start_ts, end_ts, plot_only, mp
         print('Done read %d coordinates, first is (%d, %d, %d), last is (%d, %d, %d)' % (n_coord, user_x[0], user_y[0], user_z[0], user_x[-1], user_y[-1], user_z[-1]))
         print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x), np.max(user_x), np.min(user_y), np.max(user_y), np.min(user_z), np.max(user_z)) )
         
-    gen_vel = True
+    # gen_vel = True
     gen_dis = True
     gen_acc = True
     extra_dname = 'internal'
@@ -915,7 +977,7 @@ def convert_drm(drm_fname, ssi_fname, ref_coord, start_ts, end_ts, plot_only, mp
     
     return
         
-def convert_csv(csv_fname, ssi_fname, plotonly, mpi_rank, mpi_size, verbose):
+def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  CSV [%s]' %csv_fname)
@@ -929,7 +991,7 @@ def convert_csv(csv_fname, ssi_fname, plotonly, mpi_rank, mpi_size, verbose):
     # start time and end time for truncation
     start_ts = int(df['startTime'][0])
     end_ts = int(df['endTime'][0])
-        
+
     coord_sys = ['y', 'x', '-z']
     gen_vel = True
     gen_dis = True
@@ -939,19 +1001,19 @@ def convert_csv(csv_fname, ssi_fname, plotonly, mpi_rank, mpi_size, verbose):
     # output motion for selected OpenSees nodes
     output_fname = csv_fname + '.h5drm'
     node_tags = df['nodeTag'][:].tolist()
-    n_nodes = len(node_tags)
-    node_x = np.zeros(n_nodes)
-    node_y = np.zeros(n_nodes)
-    node_z = np.zeros(n_nodes)
-    for i in range(0, n_nodes):
+    n_coord = len(node_tags)
+    node_x = np.zeros(n_coord)
+    node_y = np.zeros(n_coord)
+    node_z = np.zeros(n_coord)
+    for i in range(0, n_coord):
         node_x[i] = df.loc[i, 'x']
         node_y[i] = df.loc[i, 'y']
         node_z[i] = df.loc[i, 'z']
     
     if mpi_rank == 0:
-        print('Found motions for %i nodes...' % (n_nodes))
+        print('Finding motions for %i nodes...' % (n_coord))
     
-    output_format = 'OpenSees'
+    output_format = 'csv'
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, node_x, node_y, node_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
     return    
