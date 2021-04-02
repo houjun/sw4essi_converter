@@ -574,7 +574,7 @@ def linear_interp(data_dict, x, y, z):
     result = ((c000 * (1-xd) + c100 * xd) * (1-yd) + (c010 * (1-xd) + c110 * xd) * yd) * (1-zd) + ((c001 * (1-xd) + c101 * xd) * (1-yd) + (c011 * (1-xd) + c111 * xd) * yd) * zd
     return result
 
-def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
+def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format, rotAngle=0):
     # Read ESSI metadata
     essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, essi_nt, essi_dt, essi_timeseq = get_essi_meta(ssi_fname, verbose)
     essi_x_len_max = (essi_nx-1) * essi_h
@@ -845,7 +845,30 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_
         #end for
         print('Written', iter_count, 'coordinates')
     # end else no interpolation
-     
+    
+    # transform the motion to be measured in another coordinate system rotated 
+    # by the specified rotation angle
+    if my_ncoord[0] > 0:
+      c = np.cos(rotAngle/180.*np.pi)
+      s = np.sin(rotAngle/180.*np.pi)
+      transMatrix = np.array([[c, s, 0], [-s, c, 0], [0, 0, 1]]) # transformation matrix block
+      # print('transMatrix = ', transMatrix)
+      transMatrixAll = np.zeros((my_ncoord[0]*3, my_ncoord[0]*3), dtype='f4') # for all my_ncoord coordinates
+      # print('transMatrixAll.shape=', transMatrixAll.shape)
+      for i in range(my_ncoord[0]):
+        irange = range(3*i, 3*i+3)
+        transMatrixAll[np.ix_(irange, irange)] = transMatrix
+
+      # np.savetxt('transMatrix_mpirank_{}.txt'.format(mpi_rank), transMatrixAll, fmt='%.5e')
+      if gen_acc:
+        # np.savetxt('acc_mpirank_{}_noT.txt'.format(mpi_rank), output_acc_all[:,0:4], fmt='%.5e')
+        np.matmul(transMatrixAll, output_acc_all, output_acc_all)
+        # np.savetxt('acc_mpirank_{}_T.txt'.format(mpi_rank), output_acc_all[:,0:4], fmt='%.5e')
+      if gen_dis:
+          np.matmul(transMatrixAll, output_dis_all, output_dis_all)
+      if gen_vel:
+        np.matmul(transMatrixAll, output_vel_all, output_vel_all)
+
     # Write coordinates and boundary nodes (file created previously), in serial with baton passing
     comm.Barrier()
     
@@ -984,7 +1007,7 @@ def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
         print('Input ESSI [%s]' %ssi_fname)
         
     df = pd.read_csv(csv_fname)
-    # reference point, which is the ESSI/OPS origin in the SW4 coordinate system
+    # reference point, which is the ESSI or OpenSees origin in the SW4 coordinate system
     ref_coord[0] = df['essiXstart'][0]
     ref_coord[1] = df['essiYstart'][0]
     ref_coord[2] = df['essiZstart'][0]
@@ -1002,19 +1025,30 @@ def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
     output_fname = csv_fname + '.h5drm'
     node_tags = df['nodeTag'][:].tolist()
     n_coord = len(node_tags)
-    node_x = np.zeros(n_coord)
-    node_y = np.zeros(n_coord)
-    node_z = np.zeros(n_coord)
+    xyz = np.zeros((n_coord, 3), dtype='f4')
     for i in range(0, n_coord):
-        node_x[i] = df.loc[i, 'x']
-        node_y[i] = df.loc[i, 'y']
-        node_z[i] = df.loc[i, 'z']
-    
+        xyz[i, 0] = df.loc[i, 'x']
+        xyz[i, 1] = df.loc[i, 'y']
+        xyz[i, 2] = df.loc[i, 'z']
+    # print('xyz:', xyz)
+
+    # rotate the coordinates in the OpenSees horizontal plane around the vertical axis 
+    # passing the reference point, rotation positive when counterclockwise
+    # Note: rotate the coordinates in a coordinate system is equivalent to 
+    #       rotate the coordinate system itself in the opposite direction
+    rotAngle = df.loc[0, 'rotation'] # rotate angle in degrees
+    c = np.cos(rotAngle/180.*np.pi)
+    s = np.sin(rotAngle/180.*np.pi)
+    rotMatrix = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]) # rotation matrix
+    # print('rotMatrix:', rotMatrix)
+    rot_xyz = np.transpose(np.matmul(rotMatrix, np.transpose(xyz)))
+    # print('rot_xyz:', rot_xyz)
+
     if mpi_rank == 0:
         print('Finding motions for %i nodes...' % (n_coord))
     
     output_format = 'csv'
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, node_x, node_y, node_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, rot_xyz[:,0], rot_xyz[:,1], rot_xyz[:,2], n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format, rotAngle)
     
     return    
 
@@ -1042,7 +1076,7 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_ts, end_ts, plo
     essi_z_start = sw4ToESSI_params["essi_z_start"]
     essi_z_end   = sw4ToESSI_params["essi_z_end"]
        
-    # reference point, which is the ESSI/OPS origin in the SW4 coordinate system
+    # reference point, which is the ESSI or OpenSees origin in the SW4 coordinate system
     ref_coord[0] = essi_x_start
     ref_coord[1] = essi_y_start
     ref_coord[2] = essi_z_end
