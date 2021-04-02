@@ -989,7 +989,7 @@ def convert_drm(drm_fname, ssi_fname, ref_coord, start_ts, end_ts, plot_only, mp
         print('Done read %d coordinates, first is (%d, %d, %d), last is (%d, %d, %d)' % (n_coord, user_x[0], user_y[0], user_z[0], user_x[-1], user_y[-1], user_z[-1]))
         print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x), np.max(user_x), np.min(user_y), np.max(user_y), np.min(user_z), np.max(user_z)) )
         
-    # gen_vel = True
+    gen_vel = False
     gen_dis = True
     gen_acc = True
     extra_dname = 'internal'
