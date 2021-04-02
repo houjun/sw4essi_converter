@@ -904,7 +904,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
 
-    if output_format == "csv":
+    elif output_format == "csv":
         if mpi_rank == 0:
             create_hdf5_csv(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
 
