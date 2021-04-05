@@ -635,7 +635,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print('Start and end time step both equal to essi_nt, no need to extract motions, exit...')
         exit(0)
     else:
-      print('Error getting start and end time step: start_t, end_t, essi_dt, start_ts, end_ts =', start_t, end_t, essi_dt, start_ts, end_ts)
+      print('Error getting start and end time step: start_t, end_t, essi_dt =', start_t, end_t, essi_dt)
       exit(0)
 
     # Save dt, npts for opensees model
@@ -1261,7 +1261,7 @@ if __name__ == "__main__":
     elif use_csv and not use_template:
         convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
-        convert_template(csv_fname, template_fname, ssi_fname, start_ts, end_ts, plotonly, mpi_rank, mpi_size, verbose)
+        convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, plotonly, mpi_rank, mpi_size, verbose)
         
     if mpi_rank == 0:
         print('End time:', datetime.datetime.now().time())
