@@ -626,13 +626,16 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     essi_z_len_max = (essi_nz-1) * essi_h
     
     # Start and end time step
-    if start_t > -1e-3 and end_t > -1e-3 and start_t <= end_t:
+    if start_t > -1e-6 and end_t > -1e-6:
       start_ts = int(abs(start_t)/essi_dt)
       end_ts   = int(abs(end_t)/essi_dt)
-      if start_ts == end_ts:
+      if start_ts >= end_ts:
         end_ts = int(essi_nt)
+      if end_ts == start_ts:
+        print('Start and end time step both equal to essi_nt, no need to extract motions, exit...')
+        exit(0)
     else:
-      print('Error getting start and end time step: start_ts, end_ts =', start_ts, end_ts)
+      print('Error getting start and end time step: start_t, end_t, essi_dt, start_ts, end_ts =', start_t, end_t, essi_dt, start_ts, end_ts)
       exit(0)
 
     # Save dt, npts for opensees model
