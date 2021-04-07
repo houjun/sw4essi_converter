@@ -552,6 +552,7 @@ def str_to_coord_3d(s):
     
 def allocate_neighbor_coords_8(data_dict, x, y, z, n):
     nadd = 0
+    add_coord_str = set()
     neighbour = 2
     for i0 in range(0, neighbour):
         for i1 in range(0, neighbour):
@@ -560,11 +561,12 @@ def allocate_neighbor_coords_8(data_dict, x, y, z, n):
                 if coord_str not in data_dict:
                     data_dict[coord_str] = np.zeros(n)
                     nadd += 1
+                    add_coord_str.add(coord_str)
                     #print(coord_str)
                 #else:
                 #    print(coord_str, 'alread in dict')
                 
-    return nadd
+    return nadd, add_coord_str
 
 def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose):
     fid = h5py.File(ssi_fname, 'r')
@@ -579,18 +581,17 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             chk_data = fid[dset_name][int(chk_t*start_t):int(chk_t*(start_t+1)), int(start_x):int(start_x+chk_x), int(start_y):int(start_y+chk_y), int(start_z):int(start_z+chk_z)]
             endtime = time.time()
             if verbose: 
-                print('Rank', mpi_rank, 'read', dset_name, 'chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
+                # print('Rank', mpi_rank, 'read: cid', cids_iter, dset_name, ',time sub chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
+                print('Rank {:3d} read: cid {:4d} {}, time sub chunk {:4d}/{:4d} time: {:.3f}s'.format(mpi_rank, cids_iter, dset_name, start_t+1, nread, endtime-starttime))
                 #sys.stdout.flush()
 
             starttime = time.time()
-            for coord_str in data_dict:
+            for coord_str in cids_dict[cids_iter]:
                 x, y, z = str_to_coord_3d(coord_str)
-                cid = coord_to_chunkid(x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
-                if cid == cids_iter:
-                    # assign values from chunk to data_dict[coord_str][0:3]
-                    # print('==assign values for', x, y, z, '->', x%chk_x, y%chk_y, z%chk_z, 'cid', cid, 'is in ', cids_iter, 'timestep', chk_t*start_t)
-                    # print('shape is:', data_dict[coord_str].shape, chk_data.shape)
-                    data_dict[coord_str][chk_t*start_t:chk_t*(start_t+1)] = chk_data[:,x%chk_x,y%chk_y,z%chk_z]
+                # assign values from chunk to data_dict[coord_str][0:3]
+                # print('==assign values for', x, y, z, '->', x%chk_x, y%chk_y, z%chk_z, 'cid', cid, 'is in ', cids_iter, 'timestep', chk_t*start_t)
+                # print('shape is:', data_dict[coord_str].shape, chk_data.shape)
+                data_dict[coord_str][chk_t*start_t:chk_t*(start_t+1)] = chk_data[:,x%chk_x,y%chk_y,z%chk_z]
             endtime = time.time()
             #print('assign value time', endtime-starttime)
     fid.close()
@@ -757,7 +758,8 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     if verbose and mpi_rank == 0:
         print(nchk, 'total chunks to read/distribute', 'using chunk size (', chk_x, chk_y, chk_z, ')')
-
+        print('All needed chuck ids and their order: cids_dict =', cids_dict)
+        
     # Get the coordinates assigned to this rank
     read_coords_vel_0 = {}
     read_coords_vel_1 = {}
@@ -767,6 +769,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     my_ncoord = np.zeros(1, dtype='int')
     my_user_coordinates = np.zeros((n_coord,3), dtype='f4')
     my_converted_coordinates = np.zeros((n_coord,3), dtype='f4')
+    my_cids_dict = {}
 
     for i in range(0, n_coord):
         cid = coord_to_chunkid(coord_x[i], coord_y[i], coord_z[i], chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
@@ -795,23 +798,36 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                     
             if do_interp:
                 # Linear interpolation requires 8 neighbours' data
-                nadded = allocate_neighbor_coords_8(read_coords_vel_0, coord_x[i], coord_y[i], coord_z[i], essi_nt)
-                nadded = allocate_neighbor_coords_8(read_coords_vel_1, coord_x[i], coord_y[i], coord_z[i], essi_nt)
-                nadded = allocate_neighbor_coords_8(read_coords_vel_2, coord_x[i], coord_y[i], coord_z[i], essi_nt)
+                nadded, add_coord_str = allocate_neighbor_coords_8(read_coords_vel_0, coord_x[i], coord_y[i], coord_z[i], essi_nt)
+                nadded, add_coord_str = allocate_neighbor_coords_8(read_coords_vel_1, coord_x[i], coord_y[i], coord_z[i], essi_nt)
+                nadded, add_coord_str = allocate_neighbor_coords_8(read_coords_vel_2, coord_x[i], coord_y[i], coord_z[i], essi_nt)
+
+                if cid in my_cids_dict:
+                    my_cids_dict[cid] |= add_coord_str
+                else:
+                    my_cids_dict[cid] = {coord_str}
+
                 #print(int(coord_x[i]), int(coord_y[i]), int(coord_z[i]), 'added', nadded, 'nodes /', len(read_coords_vel_0))
             else:
                 if coord_str not in read_coords_vel_0:
                     read_coords_vel_0[coord_str] = np.zeros(essi_nt)
                     read_coords_vel_1[coord_str] = np.zeros(essi_nt)
                     read_coords_vel_2[coord_str] = np.zeros(essi_nt)
+
+                if cid in my_cids_dict:
+                    my_cids_dict[cid].add(coord_str)
+                else:
+                    my_cids_dict[cid] = {coord_str}
                     
             is_boundary[my_ncoord[0]] = extra_data[i]
             my_ncoord[0] += 1        
         #end if assigned to my rank
     #end for i in all coordinates
 
-    # if mpi_rank == 0:
-    #   print('read_coords_vel_0 =', read_coords_vel_0)
+    if mpi_rank == 0:
+      print('read_coords_vel_0 =', read_coords_vel_0)
+
+    print('Rank', mpi_rank, 'has my_cids_dict:', my_cids_dict)
 
     # Allocated more than needed previously, adjust
     my_user_coordinates.resize(my_ncoord[0], 3)
@@ -821,18 +837,36 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     all_ncoord = np.empty(mpi_size, dtype='int')
     comm.Allgather([my_ncoord, MPI.INT], [all_ncoord, MPI.INT])
     
-    my_nchk = len(cids_dict)
+    my_nchk = len(my_cids_dict)
     if verbose:
         print('Rank', mpi_rank, ': assigned', my_ncoord, 'nodes, need to read', len(read_coords_vel_0), 'nodes, in', my_nchk, 'chunk')
 
     if my_ncoord[0] > 0:
     # Read data by chunk and assign to read_coords_vel_012
-        read_hdf5_by_chunk(ssi_fname, read_coords_vel_0, 0, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
-        read_hdf5_by_chunk(ssi_fname, read_coords_vel_1, 1, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
-        read_hdf5_by_chunk(ssi_fname, read_coords_vel_2, 2, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+      for dim_iter in range(0, 3):
+        if coord_sys[dim_iter] == 'x':
+          read_hdf5_by_chunk(ssi_fname, read_coords_vel_0, dim_iter, my_cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+        elif coord_sys[dim_iter] == '-x':
+          read_hdf5_by_chunk(ssi_fname, read_coords_vel_0, dim_iter, my_cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+          for vel_iter in read_coords_vel_0:
+            read_coords_vel_0[vel_iter][:] *= -1
 
-    if verbose:
-        print('Coordinate offset:', ref_coord)
+        elif coord_sys[dim_iter] == 'y':
+          read_hdf5_by_chunk(ssi_fname, read_coords_vel_1, dim_iter, my_cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+        elif coord_sys[dim_iter] == '-y':
+          read_hdf5_by_chunk(ssi_fname, read_coords_vel_1, dim_iter, my_cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+          for vel_iter in read_coords_vel_1:
+            read_coords_vel_1[vel_iter][:] *= -1
+            
+        elif coord_sys[dim_iter] == 'z':
+          read_hdf5_by_chunk(ssi_fname, read_coords_vel_2, dim_iter, my_cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+        elif coord_sys[dim_iter] == '-z':
+          read_hdf5_by_chunk(ssi_fname, read_coords_vel_2, dim_iter, my_cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
+          for vel_iter in read_coords_vel_2:
+            read_coords_vel_2[vel_iter][:] *= -1
+
+    # if verbose:
+        # print('Coordinate offset:', ref_coord)
         #print('Rank %d, %d %d, %d %d, %d %d' %(mpi_rank, my_x_start, my_x_end, my_y_start, my_y_end, my_z_start, my_z_end))
 
     # Calculate the offset from the global array
@@ -845,20 +879,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     output_acc_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')
     output_dis_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')   
     output_vel_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')    
-    
-    # Loop over 3 dimensions with dim_iter
-    for dim_iter in range(0, 3):
-        if coord_sys[dim_iter] == '-x':
-            for vel_iter in read_coords_vel_0:
-                read_coords_vel_0[vel_iter][:] *= -1
-        elif coord_sys[dim_iter] == '-y':
-            for vel_iter in read_coords_vel_1:
-                read_coords_vel_1[vel_iter][:] *= -1
-        elif coord_sys[dim_iter] == '-z':
-            for vel_iter in read_coords_vel_2:
-                read_coords_vel_2[vel_iter][:] *= -1
-    # end for dim_iter in range(0, 3)
-   
+       
     # Iterate over all coordinates, all the vel data (vel_0 to 2) in read_coords_vel_012 dict for this rank
     if do_interp:
         read_coords_acc_0 = {}
