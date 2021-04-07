@@ -587,7 +587,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             chk_data = fid[dset_name][int(chk_t*start_t):int(chk_t*(start_t+1)), int(start_x):int(start_x+chk_x), int(start_y):int(start_y+chk_y), int(start_z):int(start_z+chk_z)]
             endtime = time.time()
             if verbose: 
-                print('Rank', mpi_rank, 'read', dset_name, 'chunk', chk_idx, '/', len(cids_dict), ', time slice', start_t+1, '/', nread, 'took', endtime-starttime, 'seconds')
+                print('Rank', mpi_rank, 'read', dset_name, 'chunk', chk_idx, '/', len(cids_dict), ', time slice', start_t+1, '/', nread, ', took', int(endtime-starttime), 'seconds')
 
             starttime = time.time()
             for coord_str in data_dict:
@@ -731,7 +731,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print('Error getting number of chunks', nchk_x, nchk_y, nchk_z)
         exit(0) 
     
-    if mpi_rank == 0:
+    if verbose and mpi_rank == 0:
         print('Essi file: chk_t, chk_x, chk_y, chk_z =', chk_t, chk_x, chk_y, chk_z, ', nchk_x, nchk_y, nchk_z =', nchk_x, nchk_y, nchk_z)
 
     ntry = 0
@@ -756,7 +756,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         #   print('ntry, nchk, mpi_size, cids_dict, chk_x, chk_y, chk_z = ', ntry, nchk, mpi_size, cids_dict, chk_x, chk_y, chk_z)
 
         if ntry == 0 and mpi_rank == 0 and nchk != mpi_size:
-            print('\nRecommend using', nchk, 'MPI ranks', 'instead of currently used', mpi_size, '\n')
+            print('\nRecommend using', nchk, 'MPI rank(s)', 'instead of currently used', mpi_size, '\n')
         
         # Don't try too manny times
         ntry += 1
@@ -839,16 +839,16 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         read_hdf5_by_chunk(ssi_fname, read_coords_vel_1, 1, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
         read_hdf5_by_chunk(ssi_fname, read_coords_vel_2, 2, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
 
-    if verbose:
-        print('Coordinate offset:', ref_coord)
+    # if verbose:
+    #     print('Coordinate offset:', ref_coord)
         #print('Rank %d, %d %d, %d %d, %d %d' %(mpi_rank, my_x_start, my_x_end, my_y_start, my_y_end, my_z_start, my_z_end))
 
     # Calculate the offset from the global array
     my_offset = 0
     for i in range(0, mpi_rank):
         my_offset += all_ncoord[i]
-    if verbose:        
-        print('Rank %d offset %d ' % (mpi_rank, my_offset))
+    # if verbose:        
+    #     print('Rank %d offset %d ' % (mpi_rank, my_offset))
 
     output_acc_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')
     output_dis_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')   
@@ -1141,9 +1141,11 @@ def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
     # ref_coord, start_t, end_t, rotate_angle = get_csv_meta(csv_fname, verbose)
 
     if mpi_rank == 0:
-        print('Finding motions for %i nodes...' % (n_coord))
+        print('Generating motions for %i nodes...' % (n_coord))
     
-    # print('convert_csv, start/end', start_t, end_t)
+    if verbose and mpi_rank == 0:
+        print('Using ref_coord={}, start_t={}, end_t={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, rotate_angle))
+
     output_format = 'csv'
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
@@ -1280,9 +1282,6 @@ if __name__ == "__main__":
     if ssi_fname == '':
         print('Error, no SW4 ESSI output file is provided, exit...')
         exit(0) 
-
-    if mpi_rank == 0:
-      print('Using ref_coord={}, start_t={}, end_t={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, rotate_angle))
 
     if use_drm:
         convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
