@@ -576,7 +576,7 @@ def allocate_neighbor_coords_8(data_dict, x, y, z, n):
 def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose):
     fid = h5py.File(ssi_fname, 'r')
     dset_name = 'vel_' + str(int(comp)) + ' ijk layout'
-    chk_idx=0
+    chk_idx=1
     for cids_iter in cids_dict:
         # Read chunk
         nread = math.ceil(fid[dset_name].shape[0] / chk_t)
@@ -587,7 +587,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             chk_data = fid[dset_name][int(chk_t*start_t):int(chk_t*(start_t+1)), int(start_x):int(start_x+chk_x), int(start_y):int(start_y+chk_y), int(start_z):int(start_z+chk_z)]
             endtime = time.time()
             if verbose: 
-                print('Rank', mpi_rank, 'read', dset_name, 'chunk', chk_idx, 'time slice', start_t+1, '/', nread, 'took', endtime-starttime, 'seconds')
+                print('Rank', mpi_rank, 'read', dset_name, 'chunk', chk_idx, '/', len(cids_dict), ', time slice', start_t+1, '/', nread, 'took', endtime-starttime, 'seconds')
 
             starttime = time.time()
             for coord_str in data_dict:
@@ -1143,7 +1143,7 @@ def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Finding motions for %i nodes...' % (n_coord))
     
-    print('convert_csv, start/end', start_t, end_t)
+    # print('convert_csv, start/end', start_t, end_t)
     output_format = 'csv'
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
