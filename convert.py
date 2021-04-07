@@ -582,7 +582,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             endtime = time.time()
             if verbose: 
                 # print('Rank', mpi_rank, 'read: cid', cids_iter, dset_name, ',time sub chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
-                print('Rank {:3d} read: cid {:4d} {}, time sub chunk {:4d}/{:4d} time: {:.3f}s'.format(mpi_rank, cids_iter, dset_name, start_t+1, nread, endtime-starttime))
+                print('Rank {:3d} read: cid {:4d} {}, time sub chunk {:4d}/{} time: {:.3f}s'.format(mpi_rank, cids_iter, dset_name, start_t+1, nread, endtime-starttime))
                 #sys.stdout.flush()
 
             starttime = time.time()
@@ -824,10 +824,10 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         #end if assigned to my rank
     #end for i in all coordinates
 
-    if mpi_rank == 0:
-      print('read_coords_vel_0 =', read_coords_vel_0)
+    # if mpi_rank == 0:
+    #   print('read_coords_vel_0 =', read_coords_vel_0)
 
-    print('Rank', mpi_rank, 'has my_cids_dict:', my_cids_dict)
+    print('Rank', mpi_rank, 'has my_cids_dict.keys() =', my_cids_dict.keys())
 
     # Allocated more than needed previously, adjust
     my_user_coordinates.resize(my_ncoord[0], 3)
