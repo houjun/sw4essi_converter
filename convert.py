@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
+import os
 import sys
 import argparse
 import h5py
 import math
 import scipy
-from scipy import ndimage
 from scipy import integrate
 import numpy as np
 import pandas as pd
@@ -13,12 +13,14 @@ import datetime
 import time
 import matplotlib
 import matplotlib.pyplot as plt
-import os
+matplotlib.rcParams['figure.dpi'] = 150
+matplotlib.use('Agg')
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
-matplotlib.rcParams['figure.dpi'] = 150
 from mpi4py import MPI
-import hdf5plugin
+import functools
+print = functools.partial(print, flush=True) # Don't buffer print
+import hdf5plugin # Use this when SW4 output uses ZFP compression, can be installed with "pip install hdf5plugin"
 
 # plot a 3D cube and grid points specified by x, y, z arrays
 def plot_cube(cube_definition, x, y, z, view):
@@ -225,46 +227,50 @@ def get_coords_range(x, x_min_val, x_max_val, add_ghost):
     return x_min, x_max
 
 
-def get_csv_meta(csv_fname):
-  # Get parameter values from csv setting file
-  df = pd.read_csv(csv_fname)
-  # reference point, which is the ESSI or OpenSees origin in the SW4 coordinate system
-  ref_coord = np.zeros(3)
-  ref_coord[0] = df['essiXstart'][0]
-  ref_coord[1] = df['essiYstart'][0]
-  ref_coord[2] = df['essiZstart'][0]
-  # start time and end time for truncation
-  start_t = df['startTime'][0]
-  end_t = df['endTime'][0]
-  # rotation angle
-  rotate_angle = df['rotationAngle'][0]
-
-  # print('In csv file: ref_coord, start_t, end_t, rotate_angle:', ref_coord, start_t, end_t, rotate_angle)
-
-  return ref_coord, start_t, end_t, rotate_angle
+# def get_csv_meta(csv_fname, verbose):
+#     # Get parameter values from csv setting file
+#     df = pd.read_csv(csv_fname)
+#     # reference point, which is the ESSI or OpenSees origin in the SW4 coordinate system
+#     ref_coord = np.zeros(3)
+#     ref_coord[0] = df['essiXstart'][0]
+#     ref_coord[1] = df['essiYstart'][0]
+#     ref_coord[2] = df['essiZstart'][0]
+#     # start time and end time for truncation
+#     start_t = df['startTime'][0]
+#     end_t = df['endTime'][0]
+#     # rotation angle
+#     rotate_angle = 0
+#     if 'rotationAngle' in df:
+#         rotate_angle = df['rotationAngle'][0]
+#     elif 'rotation' in df:
+#         rotate_angle = df['rotation'][0]
+  
+#     # print('In csv file: ref_coord, start_t, end_t, rotate_angle:', ref_coord, start_t, end_t, rotate_angle)
+  
+#     return ref_coord, start_t, end_t, rotate_angle
 
 
 def rotate_coords_ops_xyplane(x, y, z, rotate_angle, ref_coord=[0,0,0]):
-  # rotate the coordinates in the OpenSees xy plane around the vertical axis 
-  # passing the reference point, rotation positive when counterclockwise
-  # Note: (1) rotate the coordinates in a coordinate system is equivalent to 
-  #           rotate the coordinate system itself in the opposite direction;
-  #       (2) rotate_angle is in degrees;
-  #       (3) ref_coord is the coords of one node on the vertical rotate axis, 
-  #           default is the OpenSees system origin;
-
-  xyz = np.c_[x-ref_coord[0], y-ref_coord[1], z]
-  print('xyz:', xyz)
-
-  # rotation matrix
-  c = np.cos(rotate_angle/180.*np.pi)
-  s = np.sin(rotate_angle/180.*np.pi)
-  rotationMatrix = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-  # print('rotationMatrix:', rotationMatrix)
-  rotated_xyz = np.transpose(np.matmul(rotationMatrix, np.transpose(xyz)))
-  # print('rotated_xyz:', rotated_xyz)
+    # rotate the coordinates in the OpenSees xy plane around the vertical axis 
+    # passing the reference point, rotation positive when counterclockwise
+    # Note: (1) rotate the coordinates in a coordinate system is equivalent to 
+    #           rotate the coordinate system itself in the opposite direction;
+    #       (2) rotate_angle is in degrees;
+    #       (3) ref_coord is the coords of one node on the vertical rotate axis, 
+    #           default is the OpenSees system origin;
   
-  return rotated_xyz[:,0], rotated_xyz[:,1], rotated_xyz[:,2]
+    xyz = np.c_[x-ref_coord[0], y-ref_coord[1], z]
+    print('xyz:', xyz)
+  
+    # rotation matrix
+    c = np.cos(rotate_angle/180.*np.pi)
+    s = np.sin(rotate_angle/180.*np.pi)
+    rotationMatrix = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    # print('rotationMatrix:', rotationMatrix)
+    rotated_xyz = np.transpose(np.matmul(rotationMatrix, np.transpose(xyz)))
+    # print('rotated_xyz:', rotated_xyz)
+    
+    return rotated_xyz[:,0], rotated_xyz[:,1], rotated_xyz[:,2]
 
 
 def get_essi_meta(ssi_fname, verbose):
@@ -474,6 +480,7 @@ def create_hdf5_opensees(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis,
     h5file.close()
 
 def create_hdf5_csv(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
+    print('Create HDF5 file with ', ncoord, ' coordinates, ', nstep, ' steps')
     h5file = h5py.File(h5_fname, 'w')
 
     if gen_vel:
@@ -569,6 +576,7 @@ def allocate_neighbor_coords_8(data_dict, x, y, z, n):
 def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose):
     fid = h5py.File(ssi_fname, 'r')
     dset_name = 'vel_' + str(int(comp)) + ' ijk layout'
+    chk_idx=0
     for cids_iter in cids_dict:
         # Read chunk
         nread = math.ceil(fid[dset_name].shape[0] / chk_t)
@@ -579,8 +587,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             chk_data = fid[dset_name][int(chk_t*start_t):int(chk_t*(start_t+1)), int(start_x):int(start_x+chk_x), int(start_y):int(start_y+chk_y), int(start_z):int(start_z+chk_z)]
             endtime = time.time()
             if verbose: 
-                print('Rank', mpi_rank, 'read', dset_name, 'chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
-                #sys.stdout.flush()
+                print('Rank', mpi_rank, 'read', dset_name, 'chunk', chk_idx, 'time slice', start_t+1, '/', nread, 'took', endtime-starttime, 'seconds')
 
             starttime = time.time()
             for coord_str in data_dict:
@@ -593,6 +600,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
                     data_dict[coord_str][chk_t*start_t:chk_t*(start_t+1)] = chk_data[:,x%chk_x,y%chk_y,z%chk_z]
             endtime = time.time()
             #print('assign value time', endtime-starttime)
+        chk_idx += 1
     fid.close()
           
 def linear_interp(data_dict, x, y, z):
@@ -627,20 +635,20 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     
     # Start and end time step
     if start_t > -1e-6 and end_t > -1e-6:
-      start_ts = int(abs(start_t)/essi_dt)
-      end_ts   = int(abs(end_t)/essi_dt)
-      if start_ts >= end_ts:
-        end_ts = int(essi_nt)
-      if end_ts == start_ts:
-        print('Start and end time step both equal to essi_nt, no need to extract motions, exit...')
-        exit(0)
+        start_ts = int(abs(start_t)/essi_dt)
+        end_ts   = int(abs(end_t)/essi_dt)
+        if end_ts >= essi_nt:
+            end_ts = int(essi_nt)
+        if end_ts == start_ts:
+            print('Start and end time step both equal to essi_nt, no need to extract motions, exit...')
+            exit(0)
     else:
-      print('Error getting start and end time step: start_t, end_t, essi_dt =', start_t, end_t, essi_dt)
-      exit(0)
+        print('Error getting start and end time step: start_t, end_t, essi_dt =', start_t, end_t, essi_dt)
+        exit(0)
 
     # Save dt, npts for opensees model
     if mpi_rank == 0:
-      np.savetxt('Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
+        np.savetxt('Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
 
     if verbose and mpi_rank == 0:
         print('\nESSI origin x0, y0, z0, h: ', essi_x0, essi_y0, essi_z0, essi_h)
@@ -748,7 +756,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         #   print('ntry, nchk, mpi_size, cids_dict, chk_x, chk_y, chk_z = ', ntry, nchk, mpi_size, cids_dict, chk_x, chk_y, chk_z)
 
         if ntry == 0 and mpi_rank == 0 and nchk != mpi_size:
-            print('\nRecommend using', nchk, 'MPI ranks', 'instead of currently used\n', mpi_size)
+            print('\nRecommend using', nchk, 'MPI ranks', 'instead of currently used', mpi_size, '\n')
         
         # Don't try too manny times
         ntry += 1
@@ -936,25 +944,25 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     
     # transform the motion to be measured in another coordinate system rotated by the specified rotation angle
     if my_ncoord[0] > 0 and b_rotate: 
-      c = np.cos(rotate_angle/180.*np.pi)
-      s = np.sin(rotate_angle/180.*np.pi)
-      transMatrix = np.array([[c, s, 0], [-s, c, 0], [0, 0, 1]]) # transformation matrix block
-      # print('transMatrix = ', transMatrix)
-      transMatrixAll = np.zeros((my_ncoord[0]*3, my_ncoord[0]*3), dtype='f4') # for all my_ncoord coordinates
-      # print('transMatrixAll.shape=', transMatrixAll.shape)
-      for i in range(my_ncoord[0]):
-        irange = range(3*i, 3*i+3)
-        transMatrixAll[np.ix_(irange, irange)] = transMatrix
+        c = np.cos(rotate_angle/180.*np.pi)
+        s = np.sin(rotate_angle/180.*np.pi)
+        transMatrix = np.array([[c, s, 0], [-s, c, 0], [0, 0, 1]]) # transformation matrix block
+        # print('transMatrix = ', transMatrix)
+        transMatrixAll = np.zeros((my_ncoord[0]*3, my_ncoord[0]*3), dtype='f4') # for all my_ncoord coordinates
+        # print('transMatrixAll.shape=', transMatrixAll.shape)
+        for i in range(my_ncoord[0]):
+            irange = range(3*i, 3*i+3)
+            transMatrixAll[np.ix_(irange, irange)] = transMatrix
 
-      # np.savetxt('transMatrix_mpirank_{}.txt'.format(mpi_rank), transMatrixAll, fmt='%.5e')
-      if gen_acc:
-        # np.savetxt('acc_mpirank_{}_noT.txt'.format(mpi_rank), output_acc_all[:,0:4], fmt='%.5e')
-        np.matmul(transMatrixAll, output_acc_all, output_acc_all)
-        # np.savetxt('acc_mpirank_{}_T.txt'.format(mpi_rank), output_acc_all[:,0:4], fmt='%.5e')
-      if gen_dis:
-          np.matmul(transMatrixAll, output_dis_all, output_dis_all)
-      if gen_vel:
-        np.matmul(transMatrixAll, output_vel_all, output_vel_all)
+        # np.savetxt('transMatrix_mpirank_{}.txt'.format(mpi_rank), transMatrixAll, fmt='%.5e')
+        if gen_acc:
+            # np.savetxt('acc_mpirank_{}_noT.txt'.format(mpi_rank), output_acc_all[:,0:4], fmt='%.5e')
+            np.matmul(transMatrixAll, output_acc_all, output_acc_all)
+            # np.savetxt('acc_mpirank_{}_T.txt'.format(mpi_rank), output_acc_all[:,0:4], fmt='%.5e')
+        if gen_dis:
+            np.matmul(transMatrixAll, output_dis_all, output_dis_all)
+        if gen_vel:
+            np.matmul(transMatrixAll, output_vel_all, output_vel_all)
 
     # Write coordinates and boundary nodes (file created previously), in serial with baton passing
     comm.Barrier()
@@ -1088,7 +1096,7 @@ def convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
     
     return
         
-def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plot_only, mpi_rank, mpi_size, verbose):
+def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  CSV [%s]' %csv_fname)
@@ -1113,9 +1121,29 @@ def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
         user_y0[i] = df.loc[i, 'y']
         user_z0[i] = df.loc[i, 'z']
 
+    # read parameters from the csv setting file
+    ref_coord = np.zeros(3)
+    ref_coord[0] = df['essiXstart'][0]
+    ref_coord[1] = df['essiYstart'][0]
+    ref_coord[2] = df['essiZstart'][0]
+
+    # start time and end time for truncation
+    start_t = df['startTime'][0]
+    end_t = df['endTime'][0]
+
+    # rotation angle
+    rotate_angle = 0
+    if 'rotationAngle' in df:
+        rotate_angle = df['rotationAngle'][0]
+    elif 'rotation' in df:
+        rotate_angle = df['rotation'][0]
+ 
+    # ref_coord, start_t, end_t, rotate_angle = get_csv_meta(csv_fname, verbose)
+
     if mpi_rank == 0:
         print('Finding motions for %i nodes...' % (n_coord))
     
+    print('convert_csv, start/end', start_t, end_t)
     output_format = 'csv'
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
@@ -1224,9 +1252,6 @@ if __name__ == "__main__":
     if args.csv:
         csv_fname=args.csv
         use_csv=True
-        # read parameters from the csv setting file
-        # Note: these parameters can be overwritten when specified in command line
-        ref_coord, start_t, end_t, rotate_angle = get_csv_meta(csv_fname)
     if args.template:
         template_fname=args.template
         use_template=True
@@ -1245,6 +1270,9 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     mpi_size = comm.Get_size()
     mpi_rank = comm.Get_rank()
+
+    if mpi_rank == 0:
+        print('Running with ', mpi_size, 'MPI processes')
         
     if drm_fname == '' and csv_fname == '' and template_fname == '':
         print('Error, no node coordinate input file is provided, exit...')
@@ -1259,7 +1287,7 @@ if __name__ == "__main__":
     if use_drm:
         convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and not use_template:
-        convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
+        convert_csv(csv_fname, ssi_fname, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
         convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, plotonly, mpi_rank, mpi_size, verbose)
         
