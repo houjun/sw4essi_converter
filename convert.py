@@ -227,50 +227,46 @@ def get_coords_range(x, x_min_val, x_max_val, add_ghost):
     return x_min, x_max
 
 
-# def get_csv_meta(csv_fname, verbose):
-#     # Get parameter values from csv setting file
-#     df = pd.read_csv(csv_fname)
-#     # reference point, which is the ESSI or OpenSees origin in the SW4 coordinate system
-#     ref_coord = np.zeros(3)
-#     ref_coord[0] = df['essiXstart'][0]
-#     ref_coord[1] = df['essiYstart'][0]
-#     ref_coord[2] = df['essiZstart'][0]
-#     # start time and end time for truncation
-#     start_t = df['startTime'][0]
-#     end_t = df['endTime'][0]
-#     # rotation angle
-#     rotate_angle = 0
-#     if 'rotationAngle' in df:
-#         rotate_angle = df['rotationAngle'][0]
-#     elif 'rotation' in df:
-#         rotate_angle = df['rotation'][0]
-  
-#     # print('In csv file: ref_coord, start_t, end_t, rotate_angle:', ref_coord, start_t, end_t, rotate_angle)
-  
-#     return ref_coord, start_t, end_t, rotate_angle
+def get_csv_meta(csv_fname):
+  # Get parameter values from csv setting file
+  df = pd.read_csv(csv_fname)
+  # reference point, which is the ESSI or OpenSees origin in the SW4 coordinate system
+  ref_coord = np.zeros(3)
+  ref_coord[0] = df['essiXstart'][0]
+  ref_coord[1] = df['essiYstart'][0]
+  ref_coord[2] = df['essiZstart'][0]
+  # start time and end time for truncation
+  start_t = df['startTime'][0]
+  end_t = df['endTime'][0]
+  # rotation angle
+  rotate_angle = df['rotationAngle'][0]
+
+  # print('In csv file: ref_coord, start_t, end_t, rotate_angle:', ref_coord, start_t, end_t, rotate_angle)
+
+  return ref_coord, start_t, end_t, rotate_angle
 
 
 def rotate_coords_ops_xyplane(x, y, z, rotate_angle, ref_coord=[0,0,0]):
-    # rotate the coordinates in the OpenSees xy plane around the vertical axis 
-    # passing the reference point, rotation positive when counterclockwise
-    # Note: (1) rotate the coordinates in a coordinate system is equivalent to 
-    #           rotate the coordinate system itself in the opposite direction;
-    #       (2) rotate_angle is in degrees;
-    #       (3) ref_coord is the coords of one node on the vertical rotate axis, 
-    #           default is the OpenSees system origin;
+  # rotate the coordinates in the OpenSees xy plane around the vertical axis 
+  # passing the reference point, rotation positive when counterclockwise
+  # Note: (1) rotate the coordinates in a coordinate system is equivalent to 
+  #           rotate the coordinate system itself in the opposite direction;
+  #       (2) rotate_angle is in degrees;
+  #       (3) ref_coord is the coords of one node on the vertical rotate axis, 
+  #           default is the OpenSees system origin;
+
+  xyz = np.c_[x-ref_coord[0], y-ref_coord[1], z]
+  # print('xyz:', xyz)
+
+  # rotation matrix
+  c = np.cos(rotate_angle/180.*np.pi)
+  s = np.sin(rotate_angle/180.*np.pi)
+  rotationMatrix = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+  # print('rotationMatrix:', rotationMatrix)
+  rotated_xyz = np.transpose(np.matmul(rotationMatrix, np.transpose(xyz)))
+  # print('rotated_xyz:', rotated_xyz)
   
-    xyz = np.c_[x-ref_coord[0], y-ref_coord[1], z]
-    print('xyz:', xyz)
-  
-    # rotation matrix
-    c = np.cos(rotate_angle/180.*np.pi)
-    s = np.sin(rotate_angle/180.*np.pi)
-    rotationMatrix = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    # print('rotationMatrix:', rotationMatrix)
-    rotated_xyz = np.transpose(np.matmul(rotationMatrix, np.transpose(xyz)))
-    # print('rotated_xyz:', rotated_xyz)
-    
-    return rotated_xyz[:,0], rotated_xyz[:,1], rotated_xyz[:,2]
+  return rotated_xyz[:,0], rotated_xyz[:,1], rotated_xyz[:,2]
 
 
 def get_essi_meta(ssi_fname, verbose):
@@ -557,40 +553,46 @@ def str_to_coord_3d(s):
     val = s.split(',')
     return int(val[0]), int(val[1]), int(val[2])
     
-def allocate_neighbor_coords_8(data_dict, x, y, z, n):
+def allocate_neighbor_coords_8(data_dict, x, y, z, n, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z):
     nadd = 0
-    add_coord_str = set()
+    add_cids_dict = {}
     neighbour = 2
     for i0 in range(0, neighbour):
         for i1 in range(0, neighbour):
             for i2 in range(0, neighbour):
-                coord_str = coord_to_str_3d(int(x+i0), int(y+i1), int(z+i2))
+                intx, inty, intz = int(x+i0), int(y+i1), int(z+i2)
+                coord_str = coord_to_str_3d(intx, inty, intz)
                 if coord_str not in data_dict:
                     data_dict[coord_str] = np.zeros(n)
                     nadd += 1
-                    add_coord_str.add(coord_str)
+
+                    cid = coord_to_chunkid(intx, inty, intz, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
+                    if cid in add_cids_dict:
+                        add_cids_dict[cid].add(coord_str)
+                    else:
+                        add_cids_dict[cid] = {coord_str}
+
                     #print(coord_str)
                 #else:
                 #    print(coord_str, 'alread in dict')
                 
-    return nadd, add_coord_str
+    return nadd, add_cids_dict
 
 def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose):
     fid = h5py.File(ssi_fname, 'r')
     dset_name = 'vel_' + str(int(comp)) + ' ijk layout'
-    chk_idx=1
     for cids_iter in cids_dict:
         # Read chunk
         nread = math.ceil(fid[dset_name].shape[0] / chk_t)
         for start_t in range(0, nread): 
             start_x, start_y, start_z = chunkid_to_start(cids_iter, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
-            #print('Read chunk cid =', cids_iter, start_x, chk_x, start_y, chk_y, start_z, chk_z)
+            # print('Read chunk cid =', cids_iter, start_x, chk_x, start_y, chk_y, start_z, chk_z)
             starttime = time.time()
             chk_data = fid[dset_name][int(chk_t*start_t):int(chk_t*(start_t+1)), int(start_x):int(start_x+chk_x), int(start_y):int(start_y+chk_y), int(start_z):int(start_z+chk_z)]
             endtime = time.time()
             if verbose: 
                 # print('Rank', mpi_rank, 'read: cid', cids_iter, dset_name, ',time sub chunk', start_t+1, '/', nread, 'time:', endtime-starttime)
-                print('Rank {:3d} read: cid {:4d} {}, time sub chunk {:4d}/{} time: {:.3f}s'.format(mpi_rank, cids_iter, dset_name, start_t+1, nread, endtime-starttime))
+                print('Rank {:3d} read: chunk cid {:4d} {}, time slice {:3d}/{} took {:.3f}s'.format(mpi_rank, cids_iter, dset_name, start_t+1, nread, endtime-starttime))
                 #sys.stdout.flush()
 
             starttime = time.time()
@@ -602,12 +604,15 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
                 data_dict[coord_str][chk_t*start_t:chk_t*(start_t+1)] = chk_data[:,x%chk_x,y%chk_y,z%chk_z]
             endtime = time.time()
             #print('assign value time', endtime-starttime)
-        chk_idx += 1
     fid.close()
           
 def linear_interp(data_dict, x, y, z):
-    neighbour = 2    
-    neighbour_3d = np.zeros([neighbour,neighbour,neighbour])
+    # see more details at:
+    # McCallen et al. Coupling of regional geophysics and local soil-structure 
+    # models in the EQSIM fault-to-structure earthquake simulation framework
+
+    # neighbour = 2    
+    # neighbour_3d = np.zeros([neighbour,neighbour,neighbour])
     
     xd = x - int(x)
     yd = y - int(y)
@@ -639,10 +644,11 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     if start_t > -1e-6 and end_t > -1e-6:
         start_ts = int(abs(start_t)/essi_dt)
         end_ts   = int(abs(end_t)/essi_dt)
-        if end_ts >= essi_nt:
+        # if start and end time step equals, we are likely to want all following steps till the end 
+        if end_ts > essi_nt or start_ts == end_ts:
             end_ts = int(essi_nt)
-        if end_ts == start_ts:
-            print('Start and end time step both equal to essi_nt, no need to extract motions, exit...')
+        if end_ts <= start_ts:
+            print('End time step {} <= start time step {}, no need to extract motions, exit...'.format(end_ts, start_ts))
             exit(0)
     else:
         print('Error getting start and end time step: start_t, end_t, essi_dt =', start_t, end_t, essi_dt)
@@ -692,8 +698,8 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
       if np.min(user_essi_x) < essi_x0 or np.max(user_essi_x) > essi_x0+essi_x_len_max or \
          np.min(user_essi_y) < essi_y0 or np.max(user_essi_y) > essi_y0+essi_y_len_max or \
          np.min(user_essi_z) < essi_z0 or np.max(user_essi_z) > essi_z0+essi_z_len_max:
-          print('Error: all node coordinates should be within the sw4 domain for extracting the motion')
-          print('while user_essi_xyz (after rotation):\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
+          print('Error: all node coordinates (after rotation) should be within the sw4 domain for extracting the motion')
+          print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
           exit(0)
     
     # Convert to array location (spacing is 1), floating-point
@@ -752,7 +758,8 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                 # chk_z /= 2  
                 chk_z = int(chk_z/2)
                 
-        # Find how many chunks the current 
+        # Find chunks where all the user input coordinates are (not including adjacent chunks for interpolation yet)
+        # cids_dict format: {cid1:index1_in_all_cids,}
         nchk, cids_dict = get_nchunk_from_coords(coord_x, coord_y, coord_z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
         # if mpi_rank == 0:
         #   print('ntry, nchk, mpi_size, cids_dict, chk_x, chk_y, chk_z = ', ntry, nchk, mpi_size, cids_dict, chk_x, chk_y, chk_z)
@@ -768,7 +775,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     if verbose and mpi_rank == 0:
         print(nchk, 'total chunks to read/distribute', 'using chunk size (', chk_x, chk_y, chk_z, ')')
         print('All needed chuck ids and their order: cids_dict =', cids_dict)
-        
+
     # Get the coordinates assigned to this rank
     read_coords_vel_0 = {}
     read_coords_vel_1 = {}
@@ -778,7 +785,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     my_ncoord = np.zeros(1, dtype='int')
     my_user_coordinates = np.zeros((n_coord,3), dtype='f4')
     my_converted_coordinates = np.zeros((n_coord,3), dtype='f4')
-    my_cids_dict = {}
+    my_cids_dict = {} # format: {cid1:{coord_str1,},}, includes all the chunks for interpolation in this rank
 
     for i in range(0, n_coord):
         cid = coord_to_chunkid(coord_x[i], coord_y[i], coord_z[i], chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
@@ -807,14 +814,17 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                     
             if do_interp:
                 # Linear interpolation requires 8 neighbours' data
-                nadded, add_coord_str = allocate_neighbor_coords_8(read_coords_vel_0, coord_x[i], coord_y[i], coord_z[i], essi_nt)
-                nadded, add_coord_str = allocate_neighbor_coords_8(read_coords_vel_1, coord_x[i], coord_y[i], coord_z[i], essi_nt)
-                nadded, add_coord_str = allocate_neighbor_coords_8(read_coords_vel_2, coord_x[i], coord_y[i], coord_z[i], essi_nt)
+                nadded, add_cids_dict = allocate_neighbor_coords_8(read_coords_vel_0, coord_x[i], coord_y[i], coord_z[i], essi_nt, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
+                nadded, add_cids_dict = allocate_neighbor_coords_8(read_coords_vel_1, coord_x[i], coord_y[i], coord_z[i], essi_nt, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
+                nadded, add_cids_dict = allocate_neighbor_coords_8(read_coords_vel_2, coord_x[i], coord_y[i], coord_z[i], essi_nt, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
 
-                if cid in my_cids_dict:
-                    my_cids_dict[cid] |= add_coord_str
-                else:
-                    my_cids_dict[cid] = {coord_str}
+                # print('Rank', mpi_rank, ': add_cids_dict =', add_cids_dict)
+
+                for iadd in add_cids_dict:
+                    if iadd in my_cids_dict:
+                        my_cids_dict[iadd] |= add_cids_dict[iadd]
+                    else:
+                        my_cids_dict[iadd] = add_cids_dict[iadd]
 
                 #print(int(coord_x[i]), int(coord_y[i]), int(coord_z[i]), 'added', nadded, 'nodes /', len(read_coords_vel_0))
             else:
@@ -833,15 +843,17 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         #end if assigned to my rank
     #end for i in all coordinates
 
-    # if mpi_rank == 0:
-    #   print('read_coords_vel_0 =', read_coords_vel_0)
-
     print('Rank', mpi_rank, 'has my_cids_dict.keys() =', my_cids_dict.keys())
 
     # Allocated more than needed previously, adjust
     my_user_coordinates.resize(my_ncoord[0], 3)
+    my_converted_coordinates.resize(my_ncoord[0], 3)
     is_boundary.resize(my_ncoord[0])
     
+    # if mpi_rank == 0:
+    #     # print('read_coords_vel_0 =', read_coords_vel_0)
+    #     print('Rank', mpi_rank, ': my_converted_coordinates =', my_converted_coordinates)
+
     comm = MPI.COMM_WORLD
     all_ncoord = np.empty(mpi_size, dtype='int')
     comm.Allgather([my_ncoord, MPI.INT], [all_ncoord, MPI.INT])
@@ -876,7 +888,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     # if verbose:
     #     print('Coordinate offset:', ref_coord)
-        #print('Rank %d, %d %d, %d %d, %d %d' %(mpi_rank, my_x_start, my_x_end, my_y_start, my_y_end, my_z_start, my_z_end))
+    #     print('Rank %d, %d %d, %d %d, %d %d' %(mpi_rank, my_x_start, my_x_end, my_y_start, my_y_end, my_z_start, my_z_end))
 
     # Calculate the offset from the global array
     my_offset = 0
@@ -888,7 +900,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     output_acc_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')
     output_dis_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')   
     output_vel_all = np.zeros((my_ncoord[0]*3, essi_nt), dtype='f4')    
-       
+    
     # Iterate over all coordinates, all the vel data (vel_0 to 2) in read_coords_vel_012 dict for this rank
     if do_interp:
         read_coords_acc_0 = {}
@@ -1118,7 +1130,7 @@ def convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
     
     return
         
-def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
+def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  CSV [%s]' %csv_fname)
@@ -1143,31 +1155,9 @@ def convert_csv(csv_fname, ssi_fname, plot_only, mpi_rank, mpi_size, verbose):
         user_y0[i] = df.loc[i, 'y']
         user_z0[i] = df.loc[i, 'z']
 
-    # read parameters from the csv setting file
-    ref_coord = np.zeros(3)
-    ref_coord[0] = df['essiXstart'][0]
-    ref_coord[1] = df['essiYstart'][0]
-    ref_coord[2] = df['essiZstart'][0]
-
-    # start time and end time for truncation
-    start_t = df['startTime'][0]
-    end_t = df['endTime'][0]
-
-    # rotation angle
-    rotate_angle = 0
-    if 'rotationAngle' in df:
-        rotate_angle = df['rotationAngle'][0]
-    elif 'rotation' in df:
-        rotate_angle = df['rotation'][0]
- 
-    # ref_coord, start_t, end_t, rotate_angle = get_csv_meta(csv_fname, verbose)
-
     if mpi_rank == 0:
         print('Generating motions for %i nodes...' % (n_coord))
     
-    if verbose and mpi_rank == 0:
-        print('Using ref_coord={}, start_t={}, end_t={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, rotate_angle))
-
     output_format = 'csv'
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
@@ -1276,6 +1266,11 @@ if __name__ == "__main__":
     if args.csv:
         csv_fname=args.csv
         use_csv=True
+        # read parameters from the csv setting file
+        # Note: As the drm hdf5 file and csv file are usually paired in our structural
+        #       analysis workflow, its useful to read the settings from the csv file by default.
+        #       These parameters can be OVERWRITTEN when specified in command line if needed.
+        ref_coord, start_t, end_t, rotate_angle = get_csv_meta(csv_fname)
     if args.template:
         template_fname=args.template
         use_template=True
@@ -1305,10 +1300,13 @@ if __name__ == "__main__":
         print('Error, no SW4 ESSI output file is provided, exit...')
         exit(0) 
 
+    if verbose and mpi_rank == 0:
+      print('Using ref_coord={}, start_t={}, end_t={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, rotate_angle))
+
     if use_drm:
         convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and not use_template:
-        convert_csv(csv_fname, ssi_fname, plotonly, mpi_rank, mpi_size, verbose)
+        convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
         convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, plotonly, mpi_rank, mpi_size, verbose)
         
