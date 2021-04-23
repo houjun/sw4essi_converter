@@ -1160,7 +1160,6 @@ def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rota
         print('Input  DRM [%s]' %drm_fname)
         print('Input ESSI [%s]' %ssi_fname)
 
-    output_fname = save_path + '/' + drm_fname + '.h5drm'
     coord_sys = ['y', 'x', '-z']
 
     # original unrotated node coordinates
@@ -1175,6 +1174,7 @@ def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rota
     extra_dname = 'internal'
     
     output_format = 'OpenSees'
+    output_fname = save_path + '/' + output_format + 'DRMinput.h5drm'
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format)
     
@@ -1193,7 +1193,6 @@ def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rota
     extra_dname = 'nodeTag'
 
     # original unrotated node coordinates
-    output_fname = save_path + '/' + csv_fname + '.h5drm'
     df = pd.read_csv(csv_fname)
     node_tags = df['nodeTag'][:].tolist()
     n_coord = len(node_tags)
@@ -1209,6 +1208,8 @@ def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rota
         print('Generating motions for %i nodes...' % (n_coord))
     
     output_format = 'csv'
+    output_fname = save_path + '/' + output_format + 'NodeMotion.h5drm'
+
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
     return    
