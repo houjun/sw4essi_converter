@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
+# from genericpath import exists
 import os
-import sys
+# import sys
 import argparse
 import h5py
 import math
@@ -240,10 +241,11 @@ def get_csv_meta(csv_fname):
   end_t = df['endTime'][0]
   # rotation angle
   rotate_angle = df['rotationAngle'][0]
+  zeroMotionDir = df['zeroMotionDir'][0]
 
   # print('In csv file: ref_coord, start_t, end_t, rotate_angle:', ref_coord, start_t, end_t, rotate_angle)
 
-  return ref_coord, start_t, end_t, rotate_angle
+  return ref_coord, start_t, end_t, rotate_angle, zeroMotionDir
 
 
 def rotate_coords_ops_xyplane(x, y, z, rotate_angle, ref_coord=[0,0,0]):
@@ -599,7 +601,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             for coord_str in cids_dict[cids_iter]:
                 x, y, z = str_to_coord_3d(coord_str)
                 # assign values from chunk to data_dict[coord_str][0:3]
-                # print('==assign values for', x, y, z, '->', x%chk_x, y%chk_y, z%chk_z, 'cid', cid, 'is in ', cids_iter, 'timestep', chk_t*start_t)
+                # print('==assign values for', x, y, z, '->', x%chk_x, y%chk_y, z%chk_z, 'cid', cids_iter, 'is in ', cids_iter, 'timestep', chk_t*start_t)
                 # print('shape is:', data_dict[coord_str].shape, chk_data.shape)
                 data_dict[coord_str][chk_t*start_t:chk_t*(start_t+1)] = chk_data[:,x%chk_x,y%chk_y,z%chk_z]
             endtime = time.time()
@@ -617,6 +619,7 @@ def linear_interp(data_dict, x, y, z):
     xd = x - int(x)
     yd = y - int(y)
     zd = z - int(z)
+    # print('x, y, z, xd, yd, zd:', x, y, z, xd, yd, zd)
     if xd > 1 or xd < 0 or yd > 1 or yd < 0 or zd > 1 or zd < 0:
         print('Error with linear interpolation input:', x, y, z)
         exit(0)
@@ -633,7 +636,7 @@ def linear_interp(data_dict, x, y, z):
     result = ((c000 * (1-xd) + c100 * xd) * (1-yd) + (c010 * (1-xd) + c110 * xd) * yd) * (1-zd) + ((c001 * (1-xd) + c101 * xd) * (1-yd) + (c011 * (1-xd) + c111 * xd) * yd) * zd
     return result
 
-def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
+def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
     # Read ESSI metadata
     essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, essi_nt, essi_dt, essi_timeseq = get_essi_meta(ssi_fname, verbose)
     essi_x_len_max = (essi_nx-1) * essi_h
@@ -656,7 +659,10 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     # Save dt, npts for opensees model
     if mpi_rank == 0:
-        np.savetxt('Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
+        dirname = os.path.dirname(os.path.abspath(output_fname))
+        # os.makedirs(dirname, exist_ok=True)
+        # print('save_path=', dirname)
+        np.savetxt(dirname + '/Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
 
     if verbose and mpi_rank == 0:
         print('\nESSI origin x0, y0, z0, h: ', essi_x0, essi_y0, essi_z0, essi_h)
@@ -667,12 +673,31 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print(' ')
         print('Generate output file with timesteps between', start_ts, 'and', end_ts, 'in', output_format, 'format')
 
+    # to get 2D motions for 2D models, modify input node crds to enforce same motion across the width
+    # Note: this should be done before rotation, motion zero-out in the out-of-plane direction will be done later
+    # TODO: here we use the smallest crd in that direction by default
+    user_x, user_y, user_z = user_x0, user_y0, user_z0
+    if zeroMotionDir != 'None':
+      minCrd = None
+      if zeroMotionDir.upper() == 'X':
+        minCrd = np.amin(user_x0)
+        user_x = np.full(user_x0.shape, minCrd)
+      elif zeroMotionDir.upper() == 'Y':
+        minCrd = np.amin(user_y0)
+        user_y = np.full(user_y0.shape, minCrd)
+      elif zeroMotionDir.upper() == 'Z':
+        minCrd = np.amin(user_z0)
+        user_z = np.full(user_z0.shape, minCrd)
+
+      if mpi_rank == 0:
+        print('Zero out motion in {} direction, and for all nodes across that direction, use motion on plane {}={:.4f}'.\
+          format(zeroMotionDir, zeroMotionDir, minCrd))
+
     # Rotate the coordinates in the OpenSees xy plane around the vertical (z) axis
     # rotate/transform only when rotate_angle is other than 0 (default min difference is 1e-2)
     b_rotate = np.where(abs(rotate_angle) > 1e-2, True, False)
-    user_x, user_y, user_z = user_x0, user_y0, user_z0
     if b_rotate: 
-        user_x, user_y, user_z = rotate_coords_ops_xyplane(user_x0, user_y0, user_z0, rotate_angle)
+        user_x, user_y, user_z = rotate_coords_ops_xyplane(user_x, user_y, user_z, rotate_angle)
 
     # Convert user coordinate to sw4 coordinate, relative to ESSI domain (subset of SW4 domain)
     user_essi_x, user_essi_y, user_essi_z = convert_to_essi_coord(coord_sys, user_x, user_y, user_z, ref_coord)
@@ -703,9 +728,6 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
           exit(0)
     
     # Convert to array location (spacing is 1), floating-point
-    # coord_x = user_essi_x / essi_h
-    # coord_y = user_essi_y / essi_h
-    # coord_z = user_essi_z / essi_h  
     coord_x = (user_essi_x - essi_x0) / essi_h
     coord_y = (user_essi_y - essi_y0) / essi_h
     coord_z = (user_essi_z - essi_z0) / essi_h  
@@ -812,6 +834,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
             coord_str = coord_to_str_3d(int(coord_x[i]), int(coord_y[i]), int(coord_z[i]))
             # coords_str_dict[coord_str] = 1
                     
+            # if coord_x[i] % 1 != 0 or coord_y[i] % 1 != 0 or coord_z[i] % 1 != 0:
             if do_interp:
                 # Linear interpolation requires 8 neighbours' data
                 nadded, add_cids_dict = allocate_neighbor_coords_8(read_coords_vel_0, coord_x[i], coord_y[i], coord_z[i], essi_nt, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
@@ -998,6 +1021,33 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         if gen_vel:
             np.matmul(transMatrixAll, output_vel_all, output_vel_all)
 
+    # to get 2D motions for 2D models, zero out motion in the out-of-plane direction
+    if zeroMotionDir != 'None':
+      zeroMotion1D = np.zeros((1, essi_nt), dtype='f4')
+      if zeroMotionDir.upper() == 'X':
+        if gen_acc:
+          output_acc_all[0::3] = zeroMotion1D
+        if gen_dis:
+          output_dis_all[0::3] = zeroMotion1D
+        if gen_vel:
+          output_vel_all[0::3] = zeroMotion1D
+
+      elif zeroMotionDir.upper() == 'Y':
+        if gen_acc:
+          output_acc_all[1::3] = zeroMotion1D
+        if gen_dis:
+          output_dis_all[1::3] = zeroMotion1D
+        if gen_vel:
+          output_vel_all[1::3] = zeroMotion1D
+
+      elif zeroMotionDir.upper() == 'Z':
+        if gen_acc:
+          output_acc_all[2::3] = zeroMotion1D
+        if gen_dis:
+          output_dis_all[2::3] = zeroMotion1D
+        if gen_vel:
+          output_vel_all[2::3] = zeroMotion1D
+
     # Write coordinates and boundary nodes (file created previously), in serial with baton passing
     comm.Barrier()
     
@@ -1104,13 +1154,13 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print('Rank', mpi_rank, 'Finished writing data')    
     return
     
-def convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plot_only, mpi_rank, mpi_size, verbose):
+def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  DRM [%s]' %drm_fname)
         print('Input ESSI [%s]' %ssi_fname)
 
-    output_fname = drm_fname + '.h5drm'
+    output_fname = save_path + '/' + drm_fname + '.h5drm'
     coord_sys = ['y', 'x', '-z']
 
     # original unrotated node coordinates
@@ -1126,11 +1176,11 @@ def convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
     
     output_format = 'OpenSees'
 
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format)
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format)
     
     return
         
-def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plot_only, mpi_rank, mpi_size, verbose):
+def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  CSV [%s]' %csv_fname)
@@ -1143,7 +1193,7 @@ def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
     extra_dname = 'nodeTag'
 
     # original unrotated node coordinates
-    output_fname = csv_fname + '.h5drm'
+    output_fname = save_path + '/' + csv_fname + '.h5drm'
     df = pd.read_csv(csv_fname)
     node_tags = df['nodeTag'][:].tolist()
     n_coord = len(node_tags)
@@ -1159,7 +1209,7 @@ def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
         print('Generating motions for %i nodes...' % (n_coord))
     
     output_format = 'csv'
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
     return    
 
@@ -1238,10 +1288,12 @@ if __name__ == "__main__":
     drm_fname=''
     csv_fname=''
     template_fname=''
+    save_path='./'
     ref_coord=np.zeros(3)
     start_t=0
     end_t=0
     rotate_angle = 0
+    zeroMotionDir = 'None'
     
     parser=argparse.ArgumentParser()
     parser.add_argument("-c", "--csv", help="full path to the CSV setting file", default="")
@@ -1254,6 +1306,8 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--timerange", help="time range, return all steps after the lower limit for equal upper and lower limit", nargs='+', type=int)
     parser.add_argument("-R", "--rotateanlge", help="rotate angle for node coordinate and motion: [0, 360)", type=float)
     parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
+    parser.add_argument("-P", "--savepath", help="full path for saving the result files", default="")
+    parser.add_argument("-z", "--zeroMotionDir", help="direction for zeroing out motion and enforce same motion in that direction, for 2D models", default="")
     args = parser.parse_args()  
     
     if args.verbose:
@@ -1270,7 +1324,7 @@ if __name__ == "__main__":
         # Note: As the drm hdf5 file and csv file are usually paired in our structural
         #       analysis workflow, its useful to read the settings from the csv file by default.
         #       These parameters can be OVERWRITTEN when specified in command line if needed.
-        ref_coord, start_t, end_t, rotate_angle = get_csv_meta(csv_fname)
+        ref_coord, start_t, end_t, rotate_angle, zeroMotionDir = get_csv_meta(csv_fname)
     if args.template:
         template_fname=args.template
         use_template=True
@@ -1285,6 +1339,8 @@ if __name__ == "__main__":
         end_t=args.timerange[1]
     if args.rotateanlge:
         rotate_angle = args.rotateanlge
+    if args.savepath:
+        save_path = args.savepath
 
     comm = MPI.COMM_WORLD
     mpi_size = comm.Get_size()
@@ -1292,6 +1348,7 @@ if __name__ == "__main__":
 
     if mpi_rank == 0:
         print('Running with ', mpi_size, 'MPI processes')
+        os.makedirs(save_path, exist_ok=True)
         
     if drm_fname == '' and csv_fname == '' and template_fname == '':
         print('Error, no node coordinate input file is provided, exit...')
@@ -1304,11 +1361,12 @@ if __name__ == "__main__":
       print('Using ref_coord={}, start_t={}, end_t={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, rotate_angle))
 
     if use_drm:
-        convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
+        convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and not use_template:
-        convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
+        convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
         convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, plotonly, mpi_rank, mpi_size, verbose)
         
     if mpi_rank == 0:
         print('End time:', datetime.datetime.now().time())
+        
