@@ -9,15 +9,18 @@ Supported command line arguments:
 -e or --essi: full path to the SW4 ESSI output file, default=""
 -t or --template: full path to the ESSI template file with node coordinates, default=""
 -p or --plotonly: only generate plots of the input nodes
+-P or --savepath: absolute or relative path for saving the result files
 -r or --reference: reference node coordinate offset, default 0 0 0
--s or --steprange: timestep range, default 0 total_steps
+-R or --rotateanlge: rotate angle for node coordinate and motion: [0, 360)
+-s or --timerange: time range, will return all steps after the lower limit for equal upper and lower limit"
 -v or --verbose: increase output verbosity
+-z or --zeroMotionDir: direction for zeroing out motion and enforce same motion across nodes in that direction: None(default), x, y, z
 ```
 
 Example usage:
 ```
 OpenSees output:
-> mpirun -np 16 python converter.py -d OpenSeesDRMTemplate.h5drm -e Location1.essi
+> mpirun -np 16 python converter.py -d OpenSeesDRMTemplate.h5drm -e Location1.essi -c motion_setting.csv
 ESSI output:
 > mpirun -np 16 python converter.py -c Parameters_for_motion_conversion.csv -e Location53.essi -t Cubic_200_template.hdf5 
 ```

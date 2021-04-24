@@ -1304,11 +1304,11 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--plotonly", help="only generate plots of the input nodes", action="store_true")
     parser.add_argument("-r", "--reference", help="reference node coordinate offset, default 0 0 0", nargs='+', type=float)
     # parser.add_argument("-s", "--steprange", help="timestep range, default 0 total_steps", nargs='+', type=int)
-    parser.add_argument("-s", "--timerange", help="time range, return all steps after the lower limit for equal upper and lower limit", nargs='+', type=int)
+    parser.add_argument("-s", "--timerange", help="time range, will return all steps after the lower limit for equal upper and lower limit", nargs='+', type=int)
     parser.add_argument("-R", "--rotateanlge", help="rotate angle for node coordinate and motion: [0, 360)", type=float)
     parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
     parser.add_argument("-P", "--savepath", help="full path for saving the result files", default="")
-    parser.add_argument("-z", "--zeroMotionDir", help="direction for zeroing out motion and enforce same motion in that direction, for 2D models", default="")
+    parser.add_argument("-z", "--zeroMotionDir", help="direction for zeroing out motion and enforce same motion across nodes in that direction: None(default), x, y, z", default="")
     args = parser.parse_args()  
     
     if args.verbose:
@@ -1342,6 +1342,8 @@ if __name__ == "__main__":
         rotate_angle = args.rotateanlge
     if args.savepath:
         save_path = args.savepath
+    if args.zeroMotionDir:
+        zeroMotionDir = args.zeroMotionDir
 
     comm = MPI.COMM_WORLD
     mpi_size = comm.Get_size()
