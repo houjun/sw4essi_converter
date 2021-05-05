@@ -24,7 +24,7 @@ print = functools.partial(print, flush=True) # Don't buffer print
 import hdf5plugin # Use this when SW4 output uses ZFP compression, can be installed with "pip install hdf5plugin"
 
 # plot a 3D cube and grid points specified by x, y, z arrays
-def plot_cube(cube_definition, x, y, z, view):
+def plot_cube(save_path, cube_definition, x, y, z, view):
     cube_definition_array = [
         np.array(list(item))
         for item in cube_definition
@@ -145,11 +145,11 @@ def plot_cube(cube_definition, x, y, z, view):
     elif view == 'XY':
         ax.view_init(azim=0, elev=90)   # XY
     #ax.view_init(azim=0, elev=-90)   # XZ
-    fname = 'input_coords' + view + '.png'
+    fname = save_path + '/input_coords' + view + '.png'
     plt.savefig(fname)
     
 # Plot user specified grid points along with the ESSI domain, and its relative location in the SW4 domain
-def plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z):   
+def plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z, save_path='./'):   
     sw4_start_x = essi_x0
     sw4_end_x   = essi_x0 + (essi_nx-1)*essi_h
     sw4_start_y = essi_y0
@@ -163,9 +163,9 @@ def plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, us
                         (sw4_start_y,sw4_start_x,sw4_end_z)   ]
 
     # print(cube_definition)
-    plot_cube(cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XYZ')
-    plot_cube(cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XZ')
-    plot_cube(cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XY')
+    plot_cube(save_path, cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XYZ')
+    plot_cube(save_path, cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XZ')
+    plot_cube(save_path, cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XY')
     
 def read_coord_drm(drm_filename, verbose):
     if verbose:
@@ -659,10 +659,10 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     # Save dt, npts for opensees model
     if mpi_rank == 0:
-        dirname = os.path.dirname(os.path.abspath(output_fname))
+        save_path = os.path.dirname(os.path.abspath(output_fname))
         # os.makedirs(dirname, exist_ok=True)
-        # print('save_path=', dirname)
-        np.savetxt(dirname + '/Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
+        # print('save_path=', save_path)
+        np.savetxt(save_path + '/Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
 
     if verbose and mpi_rank == 0:
         print('\nESSI origin x0, y0, z0, h: ', essi_x0, essi_y0, essi_z0, essi_h)
@@ -711,7 +711,8 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     # Plot
     if mpi_rank == 0:
-        plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z)
+        save_path = os.path.dirname(os.path.abspath(output_fname))
+        plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z, save_path)
 
     if plot_only:
         if mpi_rank == 0:
@@ -727,6 +728,10 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
           print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
           exit(0)
     
+    # if mpi_rank == 0:
+    #   print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
+    #   exit(0)
+
     # Convert to array location (spacing is 1), floating-point
     coord_x = (user_essi_x - essi_x0) / essi_h
     coord_y = (user_essi_y - essi_y0) / essi_h
@@ -734,15 +739,19 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     
     # Check if we actually need interpolation
     # ghost_cell = 0
+    # do_interp = True
     do_interp = False
     for nid in range(0, n_coord):
         if user_essi_x[nid] % essi_h != 0 or user_essi_y[nid] % essi_h != 0 or user_essi_z[nid] % essi_h != 0:
             do_interp = True
             # ghost_cell = 1
-            if verbose and mpi_rank == 0:
-                print('Use spline interpolation.')
             break    
-            
+    if mpi_rank == 0:
+      if do_interp:
+        print('Use spline interpolation.')
+      else:
+        print('No spline interpolation is needed.')
+
     # print('Force to not interpolate')
     # do_interp = False
 
@@ -909,6 +918,21 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
           for vel_iter in read_coords_vel_2:
             read_coords_vel_2[vel_iter][:] *= -1
 
+      # # debug output
+      # if mpi_rank == 0:
+      #   import pickle
+      #   vel_file0 = open("read_coords_vel_0.pkl", "wb")
+      #   pickle.dump(read_coords_vel_0, vel_file0)
+      #   vel_file0.close()
+
+      #   vel_file1 = open("read_coords_vel_1.pkl", "wb")
+      #   pickle.dump(read_coords_vel_1, vel_file1)
+      #   vel_file1.close()
+
+      #   vel_file2 = open("read_coords_vel_2.pkl", "wb")
+      #   pickle.dump(read_coords_vel_2, vel_file2)
+      #   vel_file2.close()
+
     # if verbose:
     #     print('Coordinate offset:', ref_coord)
     #     print('Rank %d, %d %d, %d %d, %d %d' %(mpi_rank, my_x_start, my_x_end, my_y_start, my_y_end, my_z_start, my_z_end))
@@ -974,29 +998,34 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         # no interpolation needed, just go through all coordinates' data and convert to acc and dis
         iter_count = 0 
         print('Rank', mpi_rank, 'size of read_coords_vel_0:', len(read_coords_vel_0))
-        for vel_iter in read_coords_vel_0:
+        for iter_count in range(0, my_ncoord[0]):
+            x = my_converted_coordinates[iter_count, 0]
+            y = my_converted_coordinates[iter_count, 1]
+            z = my_converted_coordinates[iter_count, 2]
+            coord_str = coord_to_str_3d(int(x), int(y), int(z))
+
             if gen_acc:
-                output_acc_all[iter_count*3+0, :] = np.gradient(read_coords_vel_0[vel_iter][:], essi_dt, axis=0)
-                output_acc_all[iter_count*3+1, :] = np.gradient(read_coords_vel_1[vel_iter][:], essi_dt, axis=0)
-                output_acc_all[iter_count*3+2, :] = np.gradient(read_coords_vel_2[vel_iter][:], essi_dt, axis=0)
+                output_acc_all[iter_count*3+0, :] = np.gradient(read_coords_vel_0[coord_str][:], essi_dt, axis=0)
+                output_acc_all[iter_count*3+1, :] = np.gradient(read_coords_vel_1[coord_str][:], essi_dt, axis=0)
+                output_acc_all[iter_count*3+2, :] = np.gradient(read_coords_vel_2[coord_str][:], essi_dt, axis=0)
                 #if iter_count == 0:
                 #    print('acc_0 for', vel_iter, 'is:', output_acc_all[iter_count,:])                
             if gen_dis:
-                output_dis_all[iter_count*3+0, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_0[vel_iter][:], dx=essi_dt, initial=0, axis=0)
-                output_dis_all[iter_count*3+1, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_1[vel_iter][:], dx=essi_dt, initial=0, axis=0)
-                output_dis_all[iter_count*3+2, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_2[vel_iter][:], dx=essi_dt, initial=0, axis=0)   
+                output_dis_all[iter_count*3+0, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_0[coord_str][:], dx=essi_dt, initial=0, axis=0)
+                output_dis_all[iter_count*3+1, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_1[coord_str][:], dx=essi_dt, initial=0, axis=0)
+                output_dis_all[iter_count*3+2, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_2[coord_str][:], dx=essi_dt, initial=0, axis=0)   
                 #if iter_count == 0:
                 #    print('dis_0 for', vel_iter, 'is:', output_dis_all[iter_count,:])                
             if gen_vel:
-                output_vel_all[iter_count*3+0, :] = read_coords_vel_0[vel_iter][:]
-                output_vel_all[iter_count*3+1, :] = read_coords_vel_1[vel_iter][:]
-                output_vel_all[iter_count*3+2, :] = read_coords_vel_2[vel_iter][:]
+                output_vel_all[iter_count*3+0, :] = read_coords_vel_0[coord_str][:]
+                output_vel_all[iter_count*3+1, :] = read_coords_vel_1[coord_str][:]
+                output_vel_all[iter_count*3+2, :] = read_coords_vel_2[coord_str][:]
                 # debug
                 #if iter_count == 0:
                 #    print('vel_0 for', vel_iter, 'is:', read_coords_vel_0[vel_iter])
-            iter_count += 1
+            # iter_count += 1
         #end for
-        print('Written', iter_count, 'coordinates')
+        print('Rank', mpi_rank, 'has written', iter_count, 'coordinates')
     # end else no interpolation
     
     # transform the motion to be measured in another coordinate system rotated by the specified rotation angle
@@ -1372,4 +1401,3 @@ if __name__ == "__main__":
         
     if mpi_rank == 0:
         print('End time:', datetime.datetime.now().time())
-        
