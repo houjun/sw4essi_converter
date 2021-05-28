@@ -658,8 +658,8 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         exit(0)
 
     # Save dt, npts for opensees model
+    save_path = os.path.dirname(os.path.abspath(output_fname))
     if mpi_rank == 0:
-        save_path = os.path.dirname(os.path.abspath(output_fname))
         # os.makedirs(dirname, exist_ok=True)
         # print('save_path=', save_path)
         np.savetxt(save_path + '/Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
@@ -711,7 +711,6 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     # Plot
     if mpi_rank == 0:
-        save_path = os.path.dirname(os.path.abspath(output_fname))
         plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z, save_path)
 
     if plot_only:
@@ -720,13 +719,20 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         exit(0)
 
     # Check if all node coordinates are within the sw4 domain
-    if mpi_rank == 0:
-      if np.min(user_essi_x) < essi_x0 or np.max(user_essi_x) > essi_x0+essi_x_len_max or \
-         np.min(user_essi_y) < essi_y0 or np.max(user_essi_y) > essi_y0+essi_y_len_max or \
-         np.min(user_essi_z) < essi_z0 or np.max(user_essi_z) > essi_z0+essi_z_len_max:
-          print('Error: all node coordinates (after rotation) should be within the sw4 domain for extracting the motion')
-          print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
-          exit(0)
+    if np.min(user_essi_x) < essi_x0 or np.max(user_essi_x) > essi_x0+essi_x_len_max or \
+       np.min(user_essi_y) < essi_y0 or np.max(user_essi_y) > essi_y0+essi_y_len_max or \
+       np.min(user_essi_z) < essi_z0 or np.max(user_essi_z) > essi_z0+essi_z_len_max:
+        if mpi_rank == 0:
+            print('Error: all node coordinates (after rotation) should be within the sw4 domain for extracting the motion')
+            print('while:')
+            print('\t','Min/Max SW4 x:',essi_x0,essi_x0+essi_x_len_max,'Min/Max user x:',np.min(user_essi_x),np.max(user_essi_x))
+            print('\t','Min/Max SW4 y:',essi_y0,essi_y0+essi_y_len_max,'Min/Max user y:',np.min(user_essi_y),np.max(user_essi_y))
+            print('\t','Min/Max SW4 z:',essi_z0,essi_z0+essi_z_len_max,'Min/Max user z:',np.min(user_essi_z),np.max(user_essi_z))
+            
+            debugfile = save_path + '/user_essi_xyz.npy'
+            print('\tcheck user_essi_xyz (after rotation) in file \'{}\''.format(debugfile))
+            np.save(debugfile, np.c_[user_essi_x, user_essi_y, user_essi_z])
+        exit(0)
     
     # if mpi_rank == 0:
     #   print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
