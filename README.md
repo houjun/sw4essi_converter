@@ -20,7 +20,7 @@ Supported command line arguments:
 Example usage:
 ```
 OpenSees output:
-> mpirun -np 16 python converter.py -d OpenSeesDRMTemplate.h5drm -e Location1.essi -c motion_setting.csv
+> mpirun -np 3 python convert.py -d template/DRMTemplate.h5drm -e test/small.essi -c template/motion_setting.csv -P test/
 ESSI output:
-> mpirun -np 16 python converter.py -c Parameters_for_motion_conversion.csv -e Location53.essi -t Cubic_200_template.hdf5 
+> mpirun -np 16 python convert.py -c Parameters_for_motion_conversion.csv -e Location53.essi -t Cubic_200_template.hdf5 
 ```
