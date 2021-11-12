@@ -881,7 +881,8 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         #end if assigned to my rank
     #end for i in all coordinates
 
-    print('Rank', mpi_rank, 'has my_cids_dict.keys() =', my_cids_dict.keys())
+    if verbose:
+        print('Rank', mpi_rank, 'has my_cids_dict.keys() =', my_cids_dict.keys())
 
     # Allocated more than needed previously, adjust
     my_user_coordinates.resize(my_ncoord[0], 3)
