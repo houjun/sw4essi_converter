@@ -3,18 +3,18 @@
 import numpy as np
 import h5py
 import hdf5plugin
-from pyproj import CRS
-from pyproj import Transformer
 import math
 import time
-from datetime import datetime
-import matplotlib
 import matplotlib.pyplot as plt
-from mpi4py import MPI
 import os
 import argparse
-matplotlib.rcParams['figure.dpi'] = 150
-
+import pandas as pd
+import scipy
+from pyproj import CRS
+from pyproj import Transformer
+from datetime import datetime
+from scipy import integrate
+from mpi4py import MPI
 
 #Get parameter values from HDF5 data
 def get_essi_meta(ssi_fname):
@@ -51,6 +51,7 @@ if __name__ == "__main__":
     verbose = False
     ssi_fname = '/global/cscratch1/sd/houhun/stripe_large/surface-800-100.ssi'
     out_fname = ssi_fname + '.h' + str(spacing) + '.h5'
+    out_dir = './'
     xmin = 0
     xmax = 0
     ymin = 0
@@ -65,6 +66,10 @@ if __name__ == "__main__":
     parser.add_argument("-o",
                         "--output",
                         help="full path to the output file",
+                        default="")
+    parser.add_argument("-d",
+                        "--directory",
+                        help="full path to the image and csv output directory",
                         default="")
     parser.add_argument("-v",
                         "--verbose",
@@ -93,6 +98,8 @@ if __name__ == "__main__":
         ssi_fname = args.input
     if args.output:
         out_fname = args.output
+    if args.directory:
+        out_dir = args.directory
     if args.spacing:
         spacing = args.spacing[0]
     if args.xlimit:
@@ -105,6 +112,28 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     mpi_size = comm.Get_size()
     mpi_rank = comm.Get_rank()
+
+    regen_image = True
+    save_image = True
+    # Reverse the direction of the velocity values due to the SW4 direction
+    velocity_sign = [-1, -1, -1]
+
+    rechdf5_image_dir_name = '/rechdf5_image/'
+    rechdf5_csr_dir_name = '/rechdf5_csv/'
+    image_dir = out_dir + rechdf5_image_dir_name
+    csv_dir = out_dir + rechdf5_csr_dir_name
+    dset_names = ['X', 'Y', 'Z']
+
+    vel_min = [-1.2, -1.2, -1.2]
+    vel_max = [1.2, 1.2, 1.2]
+    dis_min = [-0.5, -0.5, -0.5]
+    dis_max = [0.5, 0.5, 0.5]
+    acc_min = [-15, -15, -15]
+    acc_max = [15, 15, 15]
+
+    fig_width = 7
+    fig_height = 3
+    fig_dpi = 50
 
     h = 0
     x0 = 0
@@ -171,6 +200,7 @@ if __name__ == "__main__":
     origin_off_xy = transformer2xy.transform(origin_lon, origin_lat)
     #print('transform to ', origin_off_xy)
 
+    last_sta_y = ymin - spacing
     #Create output file and dsets
     if mpi_rank == 0:
         outfile = h5py.File(out_fname, 'a')
@@ -197,128 +227,244 @@ if __name__ == "__main__":
 
         # Check for last station exist, if so, skip creation
         sta_name = 'S_' + str(int(xmax-spacing)) + '_' + str(int(ymax-spacing))
-        if not sta_name in outfile.keys():
-            for sta_x in range(xmin, xmax, spacing):
-                for sta_y in range(ymin, ymax, spacing):
-                    sta_name = 'S_' + str(sta_x) + '_' + str(sta_y)
+        # if not sta_name in outfile.keys():
+        for sta_x in range(xmin, xmax, spacing):
+            for sta_y in range(ymin, ymax, spacing):
+                sta_name = 'S_' + str(sta_x) + '_' + str(sta_y)
+
+                if sta_name in outfile.keys():
+                    grp = outfile[sta_name]
+                else:
+                    grp = outfile.create_group(sta_name)
+
+                if not 'ISNSEW' in grp.keys():
+                    nsew = 0
+                    dset = grp.create_dataset('ISNSEW', (1, ), dtype='i4')
+                    dset[0] = nsew
+
+                if not 'STX,STY,STZ' in grp.keys():
+                    xyz[0] = sta_x
+                    xyz[1] = sta_y
+                    dset = grp.create_dataset('STX,STY,STZ', (3, ), dtype='f8')
+                    dset[:] = xyz
+
+                if not 'STLA,STLO,STDP' in grp.keys():
                     x_map = sta_x * math.sin(az) + sta_y * math.cos(az) + origin_off_xy[0]
                     y_map = sta_x * math.cos(az) - sta_y * math.sin(az) + origin_off_xy[1]
                     sta_lonlat = transformer2lonlat.transform(x_map, y_map)
+                    stlalodp[0] = sta_lonlat[1]
+                    stlalodp[1] = sta_lonlat[0]
+                    dset = grp.create_dataset('STLA,STLO,STDP', (3, ), dtype='f8')
+                    dset[:] = stlalodp
 
-                    if sta_name in outfile.keys():
-                        grp = outfile[sta_name]
-                    else:
-                        grp = outfile.create_group(sta_name)
+                if not 'USEZVALUE' in grp.keys():
+                    dset = grp.create_dataset('USEZVALUE', (1, ), dtype='i4')
+                    dset[0] = 1
 
-                    if not 'ISNSEW' in grp.keys():
-                        nsew = 0
-                        dset = grp.create_dataset('ISNSEW', (1, ), dtype='i4')
-                        dset[0] = nsew
+                if not 'X' in grp.keys():
+                    grp.create_dataset("X", (npts, ), dtype='f4')
 
-                    if not 'STX,STY,STZ' in grp.keys():
-                        xyz[0] = sta_x
-                        xyz[1] = sta_y
-                        dset = grp.create_dataset('STX,STY,STZ', (3, ), dtype='f8')
-                        dset[:] = xyz
+                if not 'Y' in grp.keys():
+                    grp.create_dataset("Y", (npts, ), dtype='f4')
 
-                    if not 'STLA,STLO,STDP' in grp.keys():
-                        stlalodp[0] = sta_lonlat[1]
-                        stlalodp[1] = sta_lonlat[0]
-                        dset = grp.create_dataset('STLA,STLO,STDP', (3, ),
-                                                  dtype='f8')
-                        dset[:] = stlalodp
+                if not 'Z' in grp.keys():
+                    grp.create_dataset("Z", (npts, ), dtype='f4')
 
-                    if not 'USEZVALUE' in grp.keys():
-                        dset = grp.create_dataset('USEZVALUE', (1, ), dtype='i4')
-                        dset[0] = 1
+                if not 'NPTS' in grp.keys():
+                    dset = grp.create_dataset('NPTS', (1, ), dtype='i4')
+                    dset[0] = 0
 
-                    if not 'X' in grp.keys():
-                        dset = grp.create_dataset("X", (npts, ), dtype='f4')
-
-                    if not 'Y' in grp.keys():
-                        dset = grp.create_dataset("Y", (npts, ), dtype='f4')
-
-                    if not 'Z' in grp.keys():
-                        dset = grp.create_dataset("Z", (npts, ), dtype='f4')
-
-                    if not 'NPTS' in grp.keys():
-                        dset = grp.create_dataset('NPTS', (1, ), dtype='i4')
-                        dset[0] = 0
-
-            #End for station
+                # Check for last sta_y in sta_x, if it has data, can skip everything before
+                if grp['NPTS'][0] == npts:
+                    last_sta_y = sta_y
+            #End for x
+            # print(sta_name, grp['NPTS'][0], npts, last_sta_y)
+        # End for y
         # End need create
-        outfile.flush()
+        # outfile.flush()
         outfile.close()
+        print('Rank 0: finished file and dset creation, last processed y', last_sta_y, flush=True)
 
+        if not os.path.exists(image_dir):
+            os.mkdir(image_dir)
+        if not os.path.exists(csv_dir):
+            os.mkdir(csv_dir)
     #End mpi rank 0, create template file with all stations and metadata
-    comm.Barrier();
+
+    last_sta_y = comm.bcast(last_sta_y, root=0)
+    # comm.Barrier();
 
     #Start extracting and writing data
     ssifile = h5py.File(ssi_fname, 'r')
-    outfile = h5py.File(out_fname, 'a')
 
     my_xmin = int(xmin + spacing * mpi_rank)
     my_xmax = int(xmin + spacing * (mpi_rank+1))
 
     print('Rank', mpi_rank, 'xmin xmax', my_xmin, my_xmax, flush=True)
 
-    sta_count = 1
+    df = pd.DataFrame()
+    ts = np.linspace(0, delta *(npts - 1), npts)
+    df['Time'] = ts.tolist()
 
+    outfile = h5py.File(out_fname, 'r+')
+
+    sta_count = 1
     tic = time.perf_counter()
     if my_xmin <= xmax:
         for sta_x in range(my_xmin, my_xmax, spacing):
-            for sta_y in range(ymin, ymax, spacing):
+            for sta_y in range(last_sta_y+spacing, ymax, spacing):
 
                 sta_name = 'S_' + str(sta_x) + '_' + str(sta_y)
-                x_map = sta_x * math.sin(az) + sta_y * math.cos(az) + origin_off_xy[0]
-                y_map = sta_x * math.cos(az) - sta_y * math.sin(az) + origin_off_xy[1]
-                sta_lonlat = transformer2lonlat.transform(x_map, y_map)
+                # if sta_name in outfile.keys() and regen_image == False:
+                #     if 'NPTS' in outfile[sta_name].keys():
+                #         if outfile[sta_name]['NPTS'][0] == npts:
+                #             print('skipped', sta_name, flush = True)
+                #             continue
 
-                # print(sta_name, sta_lonlat, flush = True)
+                # print('Rank', mpi_rank, sta_name, flush=True)
 
-                if sta_name in outfile.keys() :
-                    if 'NPTS' in outfile[sta_name].keys() :
-                        if outfile[sta_name]['NPTS'][0] == npts:
-                            print('skipped', sta_name, flush = True)
-                            continue
+                for cmpid in range(0,3):
 
-                data_x = ssifile['vel_0 ijk layout'][ :, int(sta_x / h) : int(sta_x / h + 1), int(sta_y / h) : int(sta_y / h + 1), 0 : 1].flatten()
-                data_y = ssifile['vel_1 ijk layout'][ :, int(sta_x / h) : int(sta_x / h + 1), int(sta_y / h) : int(sta_y / h + 1), 0 : 1].flatten()
-                data_z = ssifile['vel_2 ijk layout'][ :, int(sta_x / h) : int(sta_x / h + 1), int(sta_y / h) : int(sta_y / h + 1), 0 : 1].flatten()
-                #print(len(data_x), data_x)
-                if sta_count % 10 == 0:
-                    toc = time.perf_counter()
-                    now = datetime.now() # current date and time
-                    print('Rank', mpi_rank, ': processed', sta_count, 'stations, until', sta_name,', took', toc - tic, now.strftime("%m/%d/%Y, %H:%M:%S"), flush = True)
+                    vel_name = 'vel_' + str(cmpid) + ' ijk layout'
+                    xstart =  int(sta_x / h)
+                    ystart =  int(sta_y / h)
+                    xend   =  int(sta_x / h + 1)
+                    yend   =  int(sta_y / h + 1)
 
-                # #ts = np.linspace(0, delta *(npts - 1), npts)
-                # #plt.plot(ts, data_x.flatten(), '-', color = 'red', label = 'Vsmin=140')
+                    data_vel = ssifile[vel_name][ :, xstart:xend, ystart:yend, 0:1 ].flatten()
 
-                grp = outfile[sta_name]
+                    if velocity_sign[cmpid] == -1:
+                        data_vel = -data_vel
 
-                dset = grp['X']
-                dset[ : ] = data_x
-                dset = grp['Y']
-                dset[ : ] = data_y
-                dset = grp['Z']
-                dset[ : ] = data_z
+                    if sta_count % 10 == 0:
+                        toc = time.perf_counter()
+                        now = datetime.now() # current date and time
+                        print('Rank', mpi_rank, ': processed', sta_count, 'stations, until', sta_name,', took', toc - tic, now.strftime("%m/%d/%Y, %H:%M:%S"), flush = True)
 
-                dset = grp['NPTS']
-                dset[0] = npts
+                    # debug
+                    # print('Rank', mpi_rank, sta_name, vel_name, cmpid, dset_names[cmpid], xstart, xend, ystart, yend, np.min(data_vel), np.max(data_vel), flush=True) 
 
-                outfile.flush()
+                    # print('Rank:', mpi_rank, sta_name, dset_names[cmpid], data_vel[int(npts/3)], data_vel[int(npts/2)], data_vel[int(npts-1)])
+                    dset = outfile[sta_name][dset_names[cmpid]]
+                    dset[:] = data_vel[:]
+                    if cmpid == 2:
+                        dset = outfile[sta_name]['NPTS']
+                        dset[0] = npts
+                        outfile.flush()
 
-                del data_x
-                del data_y
-                del data_z
+                    # Write velocity, one writer at a time
+                    # if mpi_rank == 0:
+                    #     # print('Rank:', mpi_rank, 'open file', flush=True)
+                    #     # outfile = h5py.File(out_fname, 'r+', libver='latest', swmr=False)
+                    #     outfile = h5py.File(out_fname, 'r+', driver='stdio')
+                    #     # print('Rank:', mpi_rank, sta_name, dset_names[cmpid], data_vel[int(npts/3)], data_vel[int(npts/2)], data_vel[int(npts-1)])
+                    #     dset = outfile[sta_name][dset_names[cmpid]]
+                    #     dset[:] = data_vel[:]
+                    #     if cmpid == 2:
+                    #         outfile[sta_name]['NPTS'][0] = npts
+                    #     outfile.flush()
+                    #     outfile.close()
+                    #     if mpi_size > 1:
+                    #         # print('Rank:', mpi_rank, 'send to 1', flush=True)
+                    #         comm.send(mpi_rank, dest=1, tag=11)
+                    # else:
+                    #     tmp = comm.recv(source=mpi_rank-1, tag=11)
+                    #     # print('Rank:', mpi_rank, 'recv from', tmp, ', open file', flush=True)
+                    #     # outfile = h5py.File(out_fname, 'r+', libver='latest', swmr=False)
+                    #     outfile = h5py.File(out_fname, 'r+', driver='stdio')
+                    #     # print('Rank:', mpi_rank, sta_name, dset_names[cmpid], data_vel[int(npts/3)], data_vel[int(npts/2)], data_vel[int(npts-1)])
+                    #     dset = outfile[sta_name][dset_names[cmpid]]
+                    #     dset[:] = data_vel[:]
+                    #     if cmpid == 2:
+                    #         outfile[sta_name]['NPTS'][0] = npts
+                    #     outfile.flush()
+                    #     outfile.close()
+                    #     if mpi_rank != mpi_size-1:
+                    #         # print('Rank:', mpi_rank, 'send to', mpi_rank+1, flush=True)
+                    #         comm.send(mpi_rank, dest=mpi_rank+1, tag=11)
+
+                    # Need to flip the sign for all components
+                    data_acc = np.gradient(data_vel, delta, axis=0)
+                    data_dis = scipy.integrate.cumtrapz(y=data_vel, dx=delta, initial=0, axis=0)                    
+                   
+                    vel_image_name = image_dir + '/' + sta_name + '_vel_' + dset_names[cmpid] + '.png'
+                    dis_image_name = image_dir + '/' + sta_name + '_dis_' + dset_names[cmpid] + '.png'
+                    acc_image_name = image_dir + '/' + sta_name + '_acc_' + dset_names[cmpid] + '.png'
+                    csv_name = csv_dir + '/' + sta_name + '.csv'
+                    
+                    if regen_image or not os.path.exists(csv_name):
+                        df['Vel ' + dset_names[cmpid]] = data_vel.tolist()
+                        df['Acc ' + dset_names[cmpid]] = data_acc.tolist()
+                        df['Dis ' + dset_names[cmpid]] = data_dis.tolist()
+                        df.to_csv(csv_name, index=False, float_format='%.6f')
+                        
+                    if regen_image or not os.path.exists(acc_image_name):
+                        plt.close('all')
+                        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+                        plt.subplots_adjust(bottom=0.15)
+                        plt.ylim([min(vel_min[cmpid], np.min(data_vel)), max(vel_max[cmpid], np.max(data_vel))])
+                        plt.xticks(fontsize=14)
+                        plt.yticks(fontsize=14)
+                        line, = ax.plot(ts, data_vel, color='red') 
+                        legend = 'min=' + f"{np.min(data_vel):.2f}" + ', max=' + f"{np.max(data_vel):.2f}" 
+                        #ax.legend([line],[legend], loc='upper right', fontsize=16)
+                        ax.legend([line],[legend], fontsize=16)
+                        ax.set_ylabel('Velocity ' + dset_names[cmpid] + ' (m/s)', fontsize=16)
+                        ax.set_xlabel('Time (s)', fontsize=16)
+                        plt.tight_layout()
+                        if save_image:
+                            fig.savefig(vel_image_name, dpi=fig_dpi)
+
+                        fig.clf()
+                        plt.close('all')
+                        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+                        plt.subplots_adjust(bottom=0.15)
+                        plt.ylim([min(dis_min[cmpid], np.min(data_dis)), max(dis_max[cmpid], np.max(data_dis))])
+                        plt.xticks(fontsize=14)
+                        plt.yticks(fontsize=14)
+                        ax.plot(ts, data_dis, color='red')                
+                        legend = 'min=' + f"{np.min(data_dis):.2f}" + ', max=' + f"{np.max(data_dis):.2f}" 
+                        #ax.legend([legend], loc='upper right', fontsize=16)
+                        ax.legend([legend], fontsize=16)
+                        ax.set_ylabel('Displacement ' + dset_names[cmpid] + ' (m)', fontsize=16)
+                        ax.set_xlabel('Time (s)', fontsize=16)
+                        plt.tight_layout()
+                        if save_image:
+                            fig.savefig(dis_image_name, dpi=fig_dpi)
+
+                        fig.clf()
+                        plt.close('all')
+                        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+                        plt.subplots_adjust(bottom=0.15)
+                        plt.ylim([min(acc_min[cmpid], np.min(data_acc)), max(acc_max[cmpid], np.max(data_acc))])
+                        plt.xticks(fontsize=14)
+                        plt.yticks(fontsize=14)
+                        ax.plot(ts, data_acc, color='red')                
+                        legend = 'min=' + f"{np.min(data_acc):.2f}" + ', max=' + f"{np.max(data_acc):.2f}" 
+                        #ax.legend([legend], loc='upper right', fontsize=16)
+                        ax.legend([legend], fontsize=16)
+                        ax.set_ylabel('Acceleration ' + dset_names[cmpid] + ' (m/$s^2$)', fontsize=16)
+                        ax.set_xlabel('Time (s)', fontsize=16)
+                        plt.tight_layout()
+                        if save_image:
+                            fig.savefig(acc_image_name, dpi=fig_dpi)
+                        fig.clf()
+                        plt.close('all')   
+                        
+                    # del data_vel
+                    # del data_acc
+                    # del data_dis
+
+		# End for compid
                 sta_count += 1
-
                 if sta_count % 10 == 0:
                     tic = time.perf_counter()
-        #End for station
+	    #End for y
+        #End for x
+    # End if my_xmin <= xmax:
 
-    ssifile.close()
     outfile.close()
+    ssifile.close()
 
     comm.Barrier()
 
