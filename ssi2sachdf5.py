@@ -200,7 +200,7 @@ if __name__ == "__main__":
     origin_off_xy = transformer2xy.transform(origin_lon, origin_lat)
     #print('transform to ', origin_off_xy)
 
-    last_sta_y = ymin - spacing
+    last_sta_y = ymin + spacing
     #Create output file and dsets
     if mpi_rank == 0:
         outfile = h5py.File(out_fname, 'a')
@@ -312,7 +312,7 @@ if __name__ == "__main__":
     tic = time.perf_counter()
     if my_xmin <= xmax:
         for sta_x in range(my_xmin, my_xmax, spacing):
-            for sta_y in range(last_sta_y+spacing, ymax, spacing):
+            for sta_y in range(last_sta_y, ymax, spacing):
 
                 sta_name = 'S_' + str(sta_x) + '_' + str(sta_y)
                 # if sta_name in outfile.keys() and regen_image == False:
@@ -460,6 +460,7 @@ if __name__ == "__main__":
                 if sta_count % 10 == 0:
                     tic = time.perf_counter()
 	    #End for y
+            comm.Barrier()
         #End for x
     # End if my_xmin <= xmax:
 
