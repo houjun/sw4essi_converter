@@ -142,8 +142,10 @@ def plot_cube(save_path, cube_definition, x, y, z, view):
     
     if view == 'XZ':
         ax.view_init(azim=0, elev=0)    # XZ
+        ax.set_proj_type('ortho')
     elif view == 'XY':
         ax.view_init(azim=0, elev=90)   # XY
+        ax.set_proj_type('ortho')
     #ax.view_init(azim=0, elev=-90)   # XZ
     fname = save_path + '/input_coords' + view + '.png'
     plt.savefig(fname)
@@ -1068,7 +1070,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                 #    print('vel_0 for', vel_iter, 'is:', read_coords_vel_0[vel_iter])
             # iter_count += 1
         #end for
-        print('Rank', mpi_rank, 'has written', iter_count, 'coordinates')
+        print('Rank', mpi_rank, 'has written', iter_count+1, 'coordinates')
     # end else no interpolation
     
     # transform the motion to be measured in another coordinate system rotated by the specified rotation angle
