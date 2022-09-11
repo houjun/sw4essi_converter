@@ -174,22 +174,53 @@ def read_coord_drm(drm_filename, verbose):
     # Get the coordinates from DRM file
     drm_file = h5py.File(drm_filename, 'r')
     coordinates = drm_file['Coordinates']
-    n_coord = int(coordinates.shape[0] / 3)
+    
     drm_x = np.zeros(n_coord)
     drm_y = np.zeros(n_coord)
     drm_z = np.zeros(n_coord)
-    internal = drm_file['Is Boundary Node'][:]
-
-    # need to know reference point
+    isboundary = drm_file['Is Boundary Node'][:]
     
-    for i in range(0, n_coord):
-        drm_x[i] = coordinates[i*3]
-        drm_y[i] = coordinates[i*3+1]
-        drm_z[i] = coordinates[i*3+2]
-
+    if coordinates.shape[1] == 1:
+        n_coord = int(coordinates.shape[0] / 3)
+        for i in range(0, n_coord):
+            drm_x[i] = coordinates[i*3]
+            drm_y[i] = coordinates[i*3+1]
+            drm_z[i] = coordinates[i*3+2]
+    else: # coordinates.shape[1] == 3
+        drm_x = coordinates[:,0]
+        drm_y = coordinates[:,1]
+        drm_z = coordinates[:,2]
 
     drm_file.close()
-    return drm_x, drm_y, drm_z, n_coord, internal
+    return drm_x, drm_y, drm_z, n_coord, isboundary
+
+def read_coord_h5(h5_filename, verbose):
+    if verbose:
+        print('Reading coordinates from input file [%s]' % h5_filename)
+
+    # Get the coordinates from h5 file
+    h5_file = h5py.File(h5_filename, 'r')
+    coordinates = h5_file['coordinate']
+    n_coord = coordinates.shape[0]
+    
+    h5_x = np.zeros(n_coord)
+    h5_y = np.zeros(n_coord)
+    h5_z = np.zeros(n_coord)
+    nodeTags = h5_file['nodeTag'][:]
+    
+    if coordinates.shape[1] == 1:
+        n_coord = int(coordinates.shape[0] / 3)
+        for i in range(0, n_coord):
+            h5_x[i] = coordinates[i*3]
+            h5_y[i] = coordinates[i*3+1]
+            h5_z[i] = coordinates[i*3+2]
+    else: # coordinates.shape[1] == 3
+        h5_x = coordinates[:,0]
+        h5_y = coordinates[:,1]
+        h5_z = coordinates[:,2]
+
+    h5_file.close()
+    return h5_x, h5_y, h5_z, n_coord, nodeTags
 
 # changed ref coord as just offsets
 def convert_to_essi_coord(coord_sys, from_x, from_y, from_z, ref_essi_xyz):
@@ -1124,7 +1155,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
 
-    elif output_format == "csv":
+    elif output_format == "csv" or output_format == "h5":
         if mpi_rank == 0:
             create_hdf5_csv(output_fname, n_coord, nsteps, dt, gen_vel, gen_acc, gen_dis, extra_dname)    
 
@@ -1204,7 +1235,7 @@ def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tste
     coord_sys = ['y', 'x', '-z']
 
     # original unrotated node coordinates
-    user_x0, user_y0, user_z0, n_coord, extra_data = read_coord_drm(drm_fname, verbose)  
+    user_x0, user_y0, user_z0, n_coord, isboundary = read_coord_drm(drm_fname, verbose)  
     if verbose and mpi_rank == 0:
         print('Done read %d coordinates, first is (%d, %d, %d), last is (%d, %d, %d)' % (n_coord, user_x0[0], user_y0[0], user_z0[0], user_x0[-1], user_y0[-1], user_z0[-1]))
         print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x0), np.max(user_x0), np.min(user_y0), np.max(user_y0), np.min(user_z0), np.max(user_z0)) )
@@ -1217,9 +1248,35 @@ def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tste
     output_format = 'OpenSees'
     output_fname = save_path + '/' + output_format + 'DRMinput.h5drm'
 
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format)
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, isboundary, extra_dname, output_format)
     
     return
+
+def convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
+    if mpi_rank == 0:
+        print('Start time:', datetime.datetime.now().time())
+        print('Input h5   [%s]' %h5_fname)
+        print('Input ESSI [%s]' %ssi_fname)
+        
+    coord_sys = ['y', 'x', '-z']
+    gen_vel = False
+    gen_dis = False
+    gen_acc = True  
+    extra_dname = 'nodeTag'
+
+    # original unrotated node coordinates
+    user_x0, user_y0, user_z0, n_coord, node_tags = read_coord_h5(h5_fname, verbose)
+    n_coord = len(node_tags)
+
+    if mpi_rank == 0:
+        print('Generating motions for %i nodes...' % (n_coord))
+    
+    output_format = 'h5'
+    output_fname = save_path + '/' + output_format + 'NodeMotion.h5'
+
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    
+    return            
         
 def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
@@ -1249,7 +1306,7 @@ def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tste
         print('Generating motions for %i nodes...' % (n_coord))
     
     output_format = 'csv'
-    output_fname = save_path + '/' + output_format + 'NodeMotion.h5drm'
+    output_fname = save_path + '/' + output_format + 'NodeMotion.h5'
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
@@ -1324,10 +1381,12 @@ if __name__ == "__main__":
     verbose=False
     plotonly=False
     use_drm=False
+    use_h5=False
     use_csv=False
     use_template=False
     ssi_fname=''
     drm_fname=''
+    h5_fname=''
     csv_fname=''
     template_fname=''
     save_path='./'
@@ -1341,6 +1400,7 @@ if __name__ == "__main__":
     parser=argparse.ArgumentParser()
     parser.add_argument("-c", "--csv", help="full path to the CSV setting file", default="")
     parser.add_argument("-d", "--drm", help="full path to the DRM file with node coordinates", default="")
+    parser.add_argument("-h5", "--hdf5", help="full path to the hdf5 file with node coordinates", default="")
     parser.add_argument("-e", "--essi", help="full path to the SW4 ESSI output file", default="")
     parser.add_argument("-t", "--template", help="full path to the ESSI template file with node coordinates", default="")
     parser.add_argument("-p", "--plotonly", help="only generate plots of the input nodes", action="store_true")
@@ -1360,6 +1420,9 @@ if __name__ == "__main__":
     if args.drm:
         drm_fname=args.drm
         use_drm=True
+    if args.hdf5:
+        h5_fname=args.hdf5
+        use_h5=True
     if args.csv:
         csv_fname=args.csv
         use_csv=True
@@ -1408,6 +1471,8 @@ if __name__ == "__main__":
 
     if use_drm:
         convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
+    elif use_h5:
+        convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and not use_template:
         convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
