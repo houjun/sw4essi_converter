@@ -2,8 +2,8 @@
 *.sif
 *.npy
 *.png
-csvNodeMotion.h5drm
-Truncated_dt_npts.txt
+# csvNodeMotion.h5drm
+# Truncated_dt_npts.txt
 Note.txt
 
 # VSCode

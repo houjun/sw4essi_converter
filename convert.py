@@ -713,23 +713,23 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     # to get 2D motions for 2D models, modify input node crds to enforce same motion across the width
     # Note: this should be done before rotation, motion zero-out in the out-of-plane direction will be done later
-    # TODO: here we use the smallest crd in that direction by default
+    # TODO: here we use the middle crd in that direction by default
     user_x, user_y, user_z = user_x0, user_y0, user_z0
     if zeroMotionDir != 'None':
-      minCrd = None
+      middleCrd = None
       if zeroMotionDir.upper() == 'X':
-        minCrd = np.amin(user_x0)
-        user_x = np.full(user_x0.shape, minCrd)
+        middleCrd = (np.amin(user_x0) + np.amax(user_x0)) / 2.
+        user_x = np.full(user_x0.shape, middleCrd)
       elif zeroMotionDir.upper() == 'Y':
-        minCrd = np.amin(user_y0)
-        user_y = np.full(user_y0.shape, minCrd)
+        middleCrd = (np.amin(user_y0) + np.amax(user_y0)) / 2.
+        user_y = np.full(user_y0.shape, middleCrd)
       elif zeroMotionDir.upper() == 'Z':
-        minCrd = np.amin(user_z0)
-        user_z = np.full(user_z0.shape, minCrd)
+        middleCrd = (np.amin(user_z0) + np.amax(user_z0)) / 2.
+        user_z = np.full(user_z0.shape, middleCrd)
 
       if mpi_rank == 0:
         print('Zero out motion in {} direction, and for all nodes across that direction, use motion on plane {}={:.4f}'.\
-          format(zeroMotionDir, zeroMotionDir, minCrd))
+          format(zeroMotionDir, zeroMotionDir, middleCrd))
 
     # Rotate the coordinates in the OpenSees xy plane around the vertical (z) axis
     # rotate/transform only when rotate_angle is other than 0 (default min difference is 1e-2)
