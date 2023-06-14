@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
+# from genericpath import exists
 import os
-import sys
+# import sys
 import argparse
 import h5py
 import math
@@ -23,7 +24,7 @@ print = functools.partial(print, flush=True) # Don't buffer print
 import hdf5plugin # Use this when SW4 output uses ZFP compression, can be installed with "pip install hdf5plugin"
 
 # plot a 3D cube and grid points specified by x, y, z arrays
-def plot_cube(cube_definition, x, y, z, view):
+def plot_cube(save_path, cube_definition, x, y, z, view):
     cube_definition_array = [
         np.array(list(item))
         for item in cube_definition
@@ -141,14 +142,16 @@ def plot_cube(cube_definition, x, y, z, view):
     
     if view == 'XZ':
         ax.view_init(azim=0, elev=0)    # XZ
+        ax.set_proj_type('ortho')
     elif view == 'XY':
         ax.view_init(azim=0, elev=90)   # XY
+        ax.set_proj_type('ortho')
     #ax.view_init(azim=0, elev=-90)   # XZ
-    fname = 'input_coords' + view + '.png'
+    fname = save_path + '/input_coords' + view + '.png'
     plt.savefig(fname)
     
 # Plot user specified grid points along with the ESSI domain, and its relative location in the SW4 domain
-def plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z):   
+def plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z, save_path='./'):   
     sw4_start_x = essi_x0
     sw4_end_x   = essi_x0 + (essi_nx-1)*essi_h
     sw4_start_y = essi_y0
@@ -162,9 +165,9 @@ def plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, us
                         (sw4_start_y,sw4_start_x,sw4_end_z)   ]
 
     # print(cube_definition)
-    plot_cube(cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XYZ')
-    plot_cube(cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XZ')
-    plot_cube(cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XY')
+    plot_cube(save_path, cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XYZ')
+    plot_cube(save_path, cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XZ')
+    plot_cube(save_path, cube_definition, user_essi_x, user_essi_y, user_essi_z, 'XY')
     
 def read_coord_drm(drm_filename, verbose):
     if verbose:
@@ -173,22 +176,53 @@ def read_coord_drm(drm_filename, verbose):
     # Get the coordinates from DRM file
     drm_file = h5py.File(drm_filename, 'r')
     coordinates = drm_file['Coordinates']
-    n_coord = int(coordinates.shape[0] / 3)
+    
     drm_x = np.zeros(n_coord)
     drm_y = np.zeros(n_coord)
     drm_z = np.zeros(n_coord)
-    internal = drm_file['Is Boundary Node'][:]
-
-    # need to know reference point
+    isboundary = drm_file['Is Boundary Node'][:]
     
-    for i in range(0, n_coord):
-        drm_x[i] = coordinates[i*3]
-        drm_y[i] = coordinates[i*3+1]
-        drm_z[i] = coordinates[i*3+2]
-
+    if coordinates.shape[1] == 1:
+        n_coord = int(coordinates.shape[0] / 3)
+        for i in range(0, n_coord):
+            drm_x[i] = coordinates[i*3]
+            drm_y[i] = coordinates[i*3+1]
+            drm_z[i] = coordinates[i*3+2]
+    else: # coordinates.shape[1] == 3
+        drm_x = coordinates[:,0]
+        drm_y = coordinates[:,1]
+        drm_z = coordinates[:,2]
 
     drm_file.close()
-    return drm_x, drm_y, drm_z, n_coord, internal
+    return drm_x, drm_y, drm_z, n_coord, isboundary
+
+def read_coord_h5(h5_filename, verbose):
+    if verbose:
+        print('Reading coordinates from input file [%s]' % h5_filename)
+
+    # Get the coordinates from h5 file
+    h5_file = h5py.File(h5_filename, 'r')
+    coordinates = h5_file['coordinate']
+    n_coord = coordinates.shape[0]
+    
+    h5_x = np.zeros(n_coord)
+    h5_y = np.zeros(n_coord)
+    h5_z = np.zeros(n_coord)
+    nodeTags = h5_file['nodeTag'][:]
+    
+    if coordinates.shape[1] == 1:
+        n_coord = int(coordinates.shape[0] / 3)
+        for i in range(0, n_coord):
+            h5_x[i] = coordinates[i*3]
+            h5_y[i] = coordinates[i*3+1]
+            h5_z[i] = coordinates[i*3+2]
+    else: # coordinates.shape[1] == 3
+        h5_x = coordinates[:,0]
+        h5_y = coordinates[:,1]
+        h5_z = coordinates[:,2]
+
+    h5_file.close()
+    return h5_x, h5_y, h5_z, n_coord, nodeTags
 
 # changed ref coord as just offsets
 def convert_to_essi_coord(coord_sys, from_x, from_y, from_z, ref_essi_xyz):
@@ -238,12 +272,14 @@ def get_csv_meta(csv_fname):
   # start time and end time for truncation
   start_t = df['startTime'][0]
   end_t = df['endTime'][0]
+  tstep = int(df['tstep'][0])
   # rotation angle
   rotate_angle = df['rotationAngle'][0]
+  zeroMotionDir = df['zeroMotionDir'][0]
 
   # print('In csv file: ref_coord, start_t, end_t, rotate_angle:', ref_coord, start_t, end_t, rotate_angle)
 
-  return ref_coord, start_t, end_t, rotate_angle
+  return ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir
 
 
 def rotate_coords_ops_xyplane(x, y, z, rotate_angle, ref_coord=[0,0,0]):
@@ -599,7 +635,7 @@ def read_hdf5_by_chunk(ssi_fname, data_dict, comp, cids_dict, chk_x, chk_y, chk_
             for coord_str in cids_dict[cids_iter]:
                 x, y, z = str_to_coord_3d(coord_str)
                 # assign values from chunk to data_dict[coord_str][0:3]
-                # print('==assign values for', x, y, z, '->', x%chk_x, y%chk_y, z%chk_z, 'cid', cid, 'is in ', cids_iter, 'timestep', chk_t*start_t)
+                # print('==assign values for', x, y, z, '->', x%chk_x, y%chk_y, z%chk_z, 'cid', cids_iter, 'is in ', cids_iter, 'timestep', chk_t*start_t)
                 # print('shape is:', data_dict[coord_str].shape, chk_data.shape)
                 data_dict[coord_str][chk_t*start_t:chk_t*(start_t+1)] = chk_data[:,x%chk_x,y%chk_y,z%chk_z]
             endtime = time.time()
@@ -617,6 +653,7 @@ def linear_interp(data_dict, x, y, z):
     xd = x - int(x)
     yd = y - int(y)
     zd = z - int(z)
+    # print('x, y, z, xd, yd, zd:', x, y, z, xd, yd, zd)
     if xd > 1 or xd < 0 or yd > 1 or yd < 0 or zd > 1 or zd < 0:
         print('Error with linear interpolation input:', x, y, z)
         exit(0)
@@ -633,7 +670,7 @@ def linear_interp(data_dict, x, y, z):
     result = ((c000 * (1-xd) + c100 * xd) * (1-yd) + (c010 * (1-xd) + c110 * xd) * yd) * (1-zd) + ((c001 * (1-xd) + c101 * xd) * (1-yd) + (c011 * (1-xd) + c111 * xd) * yd) * zd
     return result
 
-def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
+def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
     # Read ESSI metadata
     essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, essi_nt, essi_dt, essi_timeseq = get_essi_meta(ssi_fname, verbose)
     essi_x_len_max = (essi_nx-1) * essi_h
@@ -654,9 +691,16 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print('Error getting start and end time step: start_t, end_t, essi_dt =', start_t, end_t, essi_dt)
         exit(0)
 
+    tsteprange = range(start_ts, end_ts, tstep)
+    nsteps = len(tsteprange)
+    dt = tstep * essi_dt
+
     # Save dt, npts for opensees model
+    save_path = os.path.dirname(os.path.abspath(output_fname))
     if mpi_rank == 0:
-        np.savetxt('Truncated_dt_npts.txt', np.array([[essi_dt, end_ts-start_ts]]), fmt='%.9e %d', header='dt\t\tnpts')
+        # os.makedirs(dirname, exist_ok=True)
+        # print('save_path=', save_path)
+        np.savetxt(save_path + '/Truncated_dt_npts.txt', np.array([[dt, nsteps]]), fmt='%.9e %d', header='dt\t\tnpts')
 
     if verbose and mpi_rank == 0:
         print('\nESSI origin x0, y0, z0, h: ', essi_x0, essi_y0, essi_z0, essi_h)
@@ -665,14 +709,33 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print('ESSI max x, y, z: ', essi_x0+essi_x_len_max, essi_y0+essi_y_len_max, essi_z0+essi_z_len_max)
         print('Reference coordinate:', ref_coord)
         print(' ')
-        print('Generate output file with timesteps between', start_ts, 'and', end_ts, 'in', output_format, 'format')
+        print('Generate output file with timesteps between', start_ts, 'and', end_ts, 'with step interval', tstep, 'in', output_format, 'format')
+
+    # to get 2D motions for 2D models, modify input node crds to enforce same motion across the width
+    # Note: this should be done before rotation, motion zero-out in the out-of-plane direction will be done later
+    # TODO: here we use the middle crd in that direction by default
+    user_x, user_y, user_z = user_x0, user_y0, user_z0
+    if zeroMotionDir != 'None':
+      middleCrd = None
+      if zeroMotionDir.upper() == 'X':
+        middleCrd = (np.amin(user_x0) + np.amax(user_x0)) / 2.
+        user_x = np.full(user_x0.shape, middleCrd)
+      elif zeroMotionDir.upper() == 'Y':
+        middleCrd = (np.amin(user_y0) + np.amax(user_y0)) / 2.
+        user_y = np.full(user_y0.shape, middleCrd)
+      elif zeroMotionDir.upper() == 'Z':
+        middleCrd = (np.amin(user_z0) + np.amax(user_z0)) / 2.
+        user_z = np.full(user_z0.shape, middleCrd)
+
+      if mpi_rank == 0:
+        print('Zero out motion in {} direction, and for all nodes across that direction, use motion on plane {}={:.4f}'.\
+          format(zeroMotionDir, zeroMotionDir, middleCrd))
 
     # Rotate the coordinates in the OpenSees xy plane around the vertical (z) axis
     # rotate/transform only when rotate_angle is other than 0 (default min difference is 1e-2)
     b_rotate = np.where(abs(rotate_angle) > 1e-2, True, False)
-    user_x, user_y, user_z = user_x0, user_y0, user_z0
     if b_rotate: 
-        user_x, user_y, user_z = rotate_coords_ops_xyplane(user_x0, user_y0, user_z0, rotate_angle)
+        user_x, user_y, user_z = rotate_coords_ops_xyplane(user_x, user_y, user_z, rotate_angle)
 
     # Convert user coordinate to sw4 coordinate, relative to ESSI domain (subset of SW4 domain)
     user_essi_x, user_essi_y, user_essi_z = convert_to_essi_coord(coord_sys, user_x, user_y, user_z, ref_coord)
@@ -686,7 +749,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
 
     # Plot
     if mpi_rank == 0:
-        plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z)
+        plot_coords(essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, user_essi_x, user_essi_y, user_essi_z, save_path)
 
     if plot_only:
         if mpi_rank == 0:
@@ -694,33 +757,45 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         exit(0)
 
     # Check if all node coordinates are within the sw4 domain
-    if mpi_rank == 0:
-      if np.min(user_essi_x) < essi_x0 or np.max(user_essi_x) > essi_x0+essi_x_len_max or \
-         np.min(user_essi_y) < essi_y0 or np.max(user_essi_y) > essi_y0+essi_y_len_max or \
-         np.min(user_essi_z) < essi_z0 or np.max(user_essi_z) > essi_z0+essi_z_len_max:
-          print('Error: all node coordinates (after rotation) should be within the sw4 domain for extracting the motion')
-          print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
-          exit(0)
+    if np.min(user_essi_x) < essi_x0 or np.max(user_essi_x) > essi_x0+essi_x_len_max or \
+       np.min(user_essi_y) < essi_y0 or np.max(user_essi_y) > essi_y0+essi_y_len_max or \
+       np.min(user_essi_z) < essi_z0 or np.max(user_essi_z) > essi_z0+essi_z_len_max:
+        if mpi_rank == 0:
+            print('Error: all node coordinates (after rotation) should be within the sw4 domain for extracting the motion')
+            print('while:')
+            print('\t','Min/Max SW4 x:',essi_x0,essi_x0+essi_x_len_max,'Min/Max user x:',np.min(user_essi_x),np.max(user_essi_x))
+            print('\t','Min/Max SW4 y:',essi_y0,essi_y0+essi_y_len_max,'Min/Max user y:',np.min(user_essi_y),np.max(user_essi_y))
+            print('\t','Min/Max SW4 z:',essi_z0,essi_z0+essi_z_len_max,'Min/Max user z:',np.min(user_essi_z),np.max(user_essi_z))
+            
+            debugfile = save_path + '/user_essi_xyz.npy'
+            print('\tcheck user_essi_xyz (after rotation) in file \'{}\''.format(debugfile))
+            np.save(debugfile, np.c_[user_essi_x, user_essi_y, user_essi_z])
+        exit(0)
     
+    # if mpi_rank == 0:
+    #   print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
+    #   exit(0)
+
     # Convert to array location (spacing is 1), floating-point
-    # coord_x = user_essi_x / essi_h
-    # coord_y = user_essi_y / essi_h
-    # coord_z = user_essi_z / essi_h  
     coord_x = (user_essi_x - essi_x0) / essi_h
     coord_y = (user_essi_y - essi_y0) / essi_h
     coord_z = (user_essi_z - essi_z0) / essi_h  
     
     # Check if we actually need interpolation
     # ghost_cell = 0
+    # do_interp = True
     do_interp = False
     for nid in range(0, n_coord):
         if user_essi_x[nid] % essi_h != 0 or user_essi_y[nid] % essi_h != 0 or user_essi_z[nid] % essi_h != 0:
             do_interp = True
             # ghost_cell = 1
-            if verbose and mpi_rank == 0:
-                print('Use spline interpolation.')
             break    
-            
+    if mpi_rank == 0:
+      if do_interp:
+        print('Use spline interpolation.')
+      else:
+        print('No spline interpolation is needed.')
+
     # print('Force to not interpolate')
     # do_interp = False
 
@@ -812,6 +887,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
             coord_str = coord_to_str_3d(int(coord_x[i]), int(coord_y[i]), int(coord_z[i]))
             # coords_str_dict[coord_str] = 1
                     
+            # if coord_x[i] % 1 != 0 or coord_y[i] % 1 != 0 or coord_z[i] % 1 != 0:
             if do_interp:
                 # Linear interpolation requires 8 neighbours' data
                 nadded, add_cids_dict = allocate_neighbor_coords_8(read_coords_vel_0, coord_x[i], coord_y[i], coord_z[i], essi_nt, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z)
@@ -843,7 +919,8 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         #end if assigned to my rank
     #end for i in all coordinates
 
-    print('Rank', mpi_rank, 'has my_cids_dict.keys() =', my_cids_dict.keys())
+    if verbose:
+        print('Rank', mpi_rank, 'has my_cids_dict.keys() =', my_cids_dict.keys())
 
     # Allocated more than needed previously, adjust
     my_user_coordinates.resize(my_ncoord[0], 3)
@@ -885,6 +962,21 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
           read_hdf5_by_chunk(ssi_fname, read_coords_vel_2, dim_iter, my_cids_dict, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, chk_t, mpi_rank, verbose)
           for vel_iter in read_coords_vel_2:
             read_coords_vel_2[vel_iter][:] *= -1
+
+      # # debug output
+      # if mpi_rank == 0:
+      #   import pickle
+      #   vel_file0 = open("read_coords_vel_0.pkl", "wb")
+      #   pickle.dump(read_coords_vel_0, vel_file0)
+      #   vel_file0.close()
+
+      #   vel_file1 = open("read_coords_vel_1.pkl", "wb")
+      #   pickle.dump(read_coords_vel_1, vel_file1)
+      #   vel_file1.close()
+
+      #   vel_file2 = open("read_coords_vel_2.pkl", "wb")
+      #   pickle.dump(read_coords_vel_2, vel_file2)
+      #   vel_file2.close()
 
     # if verbose:
     #     print('Coordinate offset:', ref_coord)
@@ -951,29 +1043,34 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         # no interpolation needed, just go through all coordinates' data and convert to acc and dis
         iter_count = 0 
         print('Rank', mpi_rank, 'size of read_coords_vel_0:', len(read_coords_vel_0))
-        for vel_iter in read_coords_vel_0:
+        for iter_count in range(0, my_ncoord[0]):
+            x = my_converted_coordinates[iter_count, 0]
+            y = my_converted_coordinates[iter_count, 1]
+            z = my_converted_coordinates[iter_count, 2]
+            coord_str = coord_to_str_3d(int(x), int(y), int(z))
+
             if gen_acc:
-                output_acc_all[iter_count*3+0, :] = np.gradient(read_coords_vel_0[vel_iter][:], essi_dt, axis=0)
-                output_acc_all[iter_count*3+1, :] = np.gradient(read_coords_vel_1[vel_iter][:], essi_dt, axis=0)
-                output_acc_all[iter_count*3+2, :] = np.gradient(read_coords_vel_2[vel_iter][:], essi_dt, axis=0)
+                output_acc_all[iter_count*3+0, :] = np.gradient(read_coords_vel_0[coord_str][:], essi_dt, axis=0)
+                output_acc_all[iter_count*3+1, :] = np.gradient(read_coords_vel_1[coord_str][:], essi_dt, axis=0)
+                output_acc_all[iter_count*3+2, :] = np.gradient(read_coords_vel_2[coord_str][:], essi_dt, axis=0)
                 #if iter_count == 0:
                 #    print('acc_0 for', vel_iter, 'is:', output_acc_all[iter_count,:])                
             if gen_dis:
-                output_dis_all[iter_count*3+0, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_0[vel_iter][:], dx=essi_dt, initial=0, axis=0)
-                output_dis_all[iter_count*3+1, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_1[vel_iter][:], dx=essi_dt, initial=0, axis=0)
-                output_dis_all[iter_count*3+2, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_2[vel_iter][:], dx=essi_dt, initial=0, axis=0)   
+                output_dis_all[iter_count*3+0, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_0[coord_str][:], dx=essi_dt, initial=0, axis=0)
+                output_dis_all[iter_count*3+1, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_1[coord_str][:], dx=essi_dt, initial=0, axis=0)
+                output_dis_all[iter_count*3+2, :] =  scipy.integrate.cumtrapz(y=read_coords_vel_2[coord_str][:], dx=essi_dt, initial=0, axis=0)   
                 #if iter_count == 0:
                 #    print('dis_0 for', vel_iter, 'is:', output_dis_all[iter_count,:])                
             if gen_vel:
-                output_vel_all[iter_count*3+0, :] = read_coords_vel_0[vel_iter][:]
-                output_vel_all[iter_count*3+1, :] = read_coords_vel_1[vel_iter][:]
-                output_vel_all[iter_count*3+2, :] = read_coords_vel_2[vel_iter][:]
+                output_vel_all[iter_count*3+0, :] = read_coords_vel_0[coord_str][:]
+                output_vel_all[iter_count*3+1, :] = read_coords_vel_1[coord_str][:]
+                output_vel_all[iter_count*3+2, :] = read_coords_vel_2[coord_str][:]
                 # debug
                 #if iter_count == 0:
                 #    print('vel_0 for', vel_iter, 'is:', read_coords_vel_0[vel_iter])
-            iter_count += 1
+            # iter_count += 1
         #end for
-        print('Written', iter_count, 'coordinates')
+        print('Rank', mpi_rank, 'has written', iter_count+1, 'coordinates')
     # end else no interpolation
     
     # transform the motion to be measured in another coordinate system rotated by the specified rotation angle
@@ -998,22 +1095,49 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         if gen_vel:
             np.matmul(transMatrixAll, output_vel_all, output_vel_all)
 
+    # to get 2D motions for 2D models, zero out motion in the out-of-plane direction
+    if zeroMotionDir != 'None':
+      zeroMotion1D = np.zeros((1, essi_nt), dtype='f4')
+      if zeroMotionDir.upper() == 'X':
+        if gen_acc:
+          output_acc_all[0::3] = zeroMotion1D
+        if gen_dis:
+          output_dis_all[0::3] = zeroMotion1D
+        if gen_vel:
+          output_vel_all[0::3] = zeroMotion1D
+
+      elif zeroMotionDir.upper() == 'Y':
+        if gen_acc:
+          output_acc_all[1::3] = zeroMotion1D
+        if gen_dis:
+          output_dis_all[1::3] = zeroMotion1D
+        if gen_vel:
+          output_vel_all[1::3] = zeroMotion1D
+
+      elif zeroMotionDir.upper() == 'Z':
+        if gen_acc:
+          output_acc_all[2::3] = zeroMotion1D
+        if gen_dis:
+          output_dis_all[2::3] = zeroMotion1D
+        if gen_vel:
+          output_vel_all[2::3] = zeroMotion1D
+
     # Write coordinates and boundary nodes (file created previously), in serial with baton passing
     comm.Barrier()
     
     if output_format == "OpenSees":
         if mpi_rank == 0:
-            create_hdf5_opensees(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
+            create_hdf5_opensees(output_fname, n_coord, nsteps, dt, gen_vel, gen_acc, gen_dis, extra_dname)    
 
             if my_ncoord[0] > 0:
                 write_to_hdf5_range_2d(output_fname, 'DRM_Data', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
                 write_to_hdf5_range_1d(output_fname, 'DRM_Data', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
                 if gen_acc:
-                    write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_dis:
-                    write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_vel:
-                    write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
             if mpi_size > 1:
                 comm.send(my_ncoord, dest=1, tag=11)
         else:
@@ -1025,27 +1149,27 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                 write_to_hdf5_range_1d(output_fname, 'DRM_Data', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])    
 
                 if gen_acc:
-                    write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'acceleration', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_dis:
-                    write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'displacement', output_dis_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_vel:
-                    write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, 'DRM_Data', 'velocity',     output_vel_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
 
-    elif output_format == "csv":
+    elif output_format == "csv" or output_format == "h5":
         if mpi_rank == 0:
-            create_hdf5_csv(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
+            create_hdf5_csv(output_fname, n_coord, nsteps, dt, gen_vel, gen_acc, gen_dis, extra_dname)    
 
             if my_ncoord[0] > 0:
                 write_to_hdf5_range_2d(output_fname, '/', 'xyz', my_user_coordinates, my_offset, (my_offset+my_ncoord[0]))
                 write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
                 if gen_acc:
-                    write_to_hdf5_range(output_fname, '/', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'acceleration', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_dis:
-                    write_to_hdf5_range(output_fname, '/', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'displacement', output_dis_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_vel:
-                    write_to_hdf5_range(output_fname, '/', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'velocity',     output_vel_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
             if mpi_size > 1:
                 comm.send(my_ncoord, dest=1, tag=11)
         else:
@@ -1057,27 +1181,27 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                 write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])    
 
                 if gen_acc:
-                    write_to_hdf5_range(output_fname, '/', 'acceleration', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'acceleration', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_dis:
-                    write_to_hdf5_range(output_fname, '/', 'displacement', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'displacement', output_dis_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_vel:
-                    write_to_hdf5_range(output_fname, '/', 'velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'velocity',     output_vel_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
 
     elif output_format == "ESSI":
         if mpi_rank == 0:
-            create_hdf5_essi(output_fname, n_coord, end_ts-start_ts, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
+            create_hdf5_essi(output_fname, n_coord, nsteps, dt, gen_vel, gen_acc, gen_dis, extra_dname)    
             # Write to the template file
             if my_ncoord[0] > 0:
                 write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), my_offset, (my_offset+my_ncoord[0])*3)
                 write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
                 if gen_acc:
-                    write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_dis:
-                    write_to_hdf5_range(output_fname, '/', 'Displacements', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'Displacements', output_dis_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_vel:
-                    write_to_hdf5_range(output_fname, '/', 'Velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)                
+                    write_to_hdf5_range(output_fname, '/', 'Velocity',     output_vel_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)                
                 
             if mpi_size > 1:
                 comm.send(my_ncoord, dest=1, tag=111)
@@ -1087,11 +1211,11 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                 write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), my_offset, (my_offset+my_ncoord[0])*3)
                 write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
                 if gen_acc:
-                    write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_dis:
-                    write_to_hdf5_range(output_fname, '/', 'Displacements', output_dis_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)
+                    write_to_hdf5_range(output_fname, '/', 'Displacements', output_dis_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
                 if gen_vel:
-                    write_to_hdf5_range(output_fname, '/', 'Velocity',     output_vel_all[:,start_ts:end_ts], my_offset*3, (my_offset+my_ncoord[0])*3)              
+                    write_to_hdf5_range(output_fname, '/', 'Velocity',     output_vel_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)              
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=111) 
                 
@@ -1104,17 +1228,16 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print('Rank', mpi_rank, 'Finished writing data')    
     return
     
-def convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plot_only, mpi_rank, mpi_size, verbose):
+def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  DRM [%s]' %drm_fname)
         print('Input ESSI [%s]' %ssi_fname)
 
-    output_fname = drm_fname + '.h5drm'
     coord_sys = ['y', 'x', '-z']
 
     # original unrotated node coordinates
-    user_x0, user_y0, user_z0, n_coord, extra_data = read_coord_drm(drm_fname, verbose)  
+    user_x0, user_y0, user_z0, n_coord, isboundary = read_coord_drm(drm_fname, verbose)  
     if verbose and mpi_rank == 0:
         print('Done read %d coordinates, first is (%d, %d, %d), last is (%d, %d, %d)' % (n_coord, user_x0[0], user_y0[0], user_z0[0], user_x0[-1], user_y0[-1], user_z0[-1]))
         print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x0), np.max(user_x0), np.min(user_y0), np.max(user_y0), np.min(user_z0), np.max(user_z0)) )
@@ -1125,12 +1248,39 @@ def convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
     extra_dname = 'internal'
     
     output_format = 'OpenSees'
+    output_fname = save_path + '/' + output_format + 'DRMinput.h5drm'
 
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format)
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, isboundary, extra_dname, output_format)
     
     return
+
+def convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
+    if mpi_rank == 0:
+        print('Start time:', datetime.datetime.now().time())
+        print('Input h5   [%s]' %h5_fname)
+        print('Input ESSI [%s]' %ssi_fname)
         
-def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plot_only, mpi_rank, mpi_size, verbose):
+    coord_sys = ['y', 'x', '-z']
+    gen_vel = False
+    gen_dis = False
+    gen_acc = True  
+    extra_dname = 'nodeTag'
+
+    # original unrotated node coordinates
+    user_x0, user_y0, user_z0, n_coord, node_tags = read_coord_h5(h5_fname, verbose)
+    n_coord = len(node_tags)
+
+    if mpi_rank == 0:
+        print('Generating motions for %i nodes...' % (n_coord))
+    
+    output_format = 'h5'
+    output_fname = save_path + '/' + output_format + 'NodeMotion.h5'
+
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    
+    return            
+        
+def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Start time:', datetime.datetime.now().time())
         print('Input  CSV [%s]' %csv_fname)
@@ -1143,7 +1293,6 @@ def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
     extra_dname = 'nodeTag'
 
     # original unrotated node coordinates
-    output_fname = csv_fname + '.h5drm'
     df = pd.read_csv(csv_fname)
     node_tags = df['nodeTag'][:].tolist()
     n_coord = len(node_tags)
@@ -1159,7 +1308,9 @@ def convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, p
         print('Generating motions for %i nodes...' % (n_coord))
     
     output_format = 'csv'
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, rotate_angle, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    output_fname = save_path + '/' + output_format + 'NodeMotion.h5'
+
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
     return    
 
@@ -1232,28 +1383,36 @@ if __name__ == "__main__":
     verbose=False
     plotonly=False
     use_drm=False
+    use_h5=False
     use_csv=False
     use_template=False
     ssi_fname=''
     drm_fname=''
+    h5_fname=''
     csv_fname=''
     template_fname=''
+    save_path='./'
     ref_coord=np.zeros(3)
     start_t=0
     end_t=0
+    tstep = 1
     rotate_angle = 0
+    zeroMotionDir = 'None'
     
     parser=argparse.ArgumentParser()
     parser.add_argument("-c", "--csv", help="full path to the CSV setting file", default="")
     parser.add_argument("-d", "--drm", help="full path to the DRM file with node coordinates", default="")
+    parser.add_argument("-h5", "--hdf5", help="full path to the hdf5 file with node coordinates", default="")
     parser.add_argument("-e", "--essi", help="full path to the SW4 ESSI output file", default="")
     parser.add_argument("-t", "--template", help="full path to the ESSI template file with node coordinates", default="")
     parser.add_argument("-p", "--plotonly", help="only generate plots of the input nodes", action="store_true")
     parser.add_argument("-r", "--reference", help="reference node coordinate offset, default 0 0 0", nargs='+', type=float)
     # parser.add_argument("-s", "--steprange", help="timestep range, default 0 total_steps", nargs='+', type=int)
-    parser.add_argument("-s", "--timerange", help="time range, return all steps after the lower limit for equal upper and lower limit", nargs='+', type=int)
+    parser.add_argument("-s", "--timerange", help="time range, will return all steps after the lower limit for equal upper and lower limit", nargs='+', type=int)
     parser.add_argument("-R", "--rotateanlge", help="rotate angle for node coordinate and motion: [0, 360)", type=float)
     parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
+    parser.add_argument("-P", "--savepath", help="full path for saving the result files", default="")
+    parser.add_argument("-z", "--zeroMotionDir", help="direction for zeroing out motion and enforce same motion across nodes in that direction: None(default), x, y, z", default="")
     args = parser.parse_args()  
     
     if args.verbose:
@@ -1263,6 +1422,9 @@ if __name__ == "__main__":
     if args.drm:
         drm_fname=args.drm
         use_drm=True
+    if args.hdf5:
+        h5_fname=args.hdf5
+        use_h5=True
     if args.csv:
         csv_fname=args.csv
         use_csv=True
@@ -1270,7 +1432,7 @@ if __name__ == "__main__":
         # Note: As the drm hdf5 file and csv file are usually paired in our structural
         #       analysis workflow, its useful to read the settings from the csv file by default.
         #       These parameters can be OVERWRITTEN when specified in command line if needed.
-        ref_coord, start_t, end_t, rotate_angle = get_csv_meta(csv_fname)
+        ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir = get_csv_meta(csv_fname)
     if args.template:
         template_fname=args.template
         use_template=True
@@ -1283,8 +1445,13 @@ if __name__ == "__main__":
     if args.timerange:
         start_t=args.timerange[0]
         end_t=args.timerange[1]
+        tstep = args.timerange[2] # time step interval
     if args.rotateanlge:
         rotate_angle = args.rotateanlge
+    if args.savepath:
+        save_path = args.savepath
+    if args.zeroMotionDir:
+        zeroMotionDir = args.zeroMotionDir
 
     comm = MPI.COMM_WORLD
     mpi_size = comm.Get_size()
@@ -1292,6 +1459,7 @@ if __name__ == "__main__":
 
     if mpi_rank == 0:
         print('Running with ', mpi_size, 'MPI processes')
+        os.makedirs(save_path, exist_ok=True)
         
     if drm_fname == '' and csv_fname == '' and template_fname == '':
         print('Error, no node coordinate input file is provided, exit...')
@@ -1301,12 +1469,14 @@ if __name__ == "__main__":
         exit(0) 
 
     if verbose and mpi_rank == 0:
-      print('Using ref_coord={}, start_t={}, end_t={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, rotate_angle))
+      print('Using ref_coord={}, start_t={}, end_t={}, tstep={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, tstep, rotate_angle))
 
     if use_drm:
-        convert_drm(drm_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
+        convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
+    elif use_h5:
+        convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and not use_template:
-        convert_csv(csv_fname, ssi_fname, ref_coord, start_t, end_t, rotate_angle, plotonly, mpi_rank, mpi_size, verbose)
+        convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
         convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, plotonly, mpi_rank, mpi_size, verbose)
         

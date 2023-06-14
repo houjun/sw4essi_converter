@@ -1,0 +1,10 @@
+# ignore files
+*.sif
+*.npy
+*.png
+# csvNodeMotion.h5drm
+# Truncated_dt_npts.txt
+Note.txt
+
+# VSCode
+.vscode
