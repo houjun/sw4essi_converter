@@ -129,6 +129,14 @@ def prepare_essi_output_file(source_fname, output_fname):
 #     y = filtfilt(b, a, data, axis=0, method="gust")
 #     return y
 
+# from scipy.signal import butter,filtfilt
+# def butter_lowpass_filter(data, cutoff, nyq, order):
+#     normal_cutoff = cutoff / nyq
+#     # Get the filter coefficients
+#     b, a = butter(order, normal_cutoff, btype='low', analog=False)
+#     y = filtfilt(b, a, data, axis=0, method="gust")
+#     return y
+
 # plot a 3D cube and grid points specified by x, y, z arrays
 def plot_cube(save_path, cube_definition, x, y, z, view):
     cube_definition_array = [
