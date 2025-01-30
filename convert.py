@@ -820,6 +820,11 @@ def coord_to_chunkid(x0, y0, z0, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, nx
 
     val = int(np.floor(x/chk_x)*nchk_y*nchk_z + np.floor(y/chk_y)*nchk_z + np.floor(z/chk_z))
     #print('coord_to_chunkid:', x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, val)
+    
+    str_crd = coord_to_str_3d(x0, y0, z0)
+    if str_crd == '2900, 7100, 1':
+        print(f'{str_crd}: cid: {val}')
+      
     return val
 
 def chunkid_to_start(cid, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z):
