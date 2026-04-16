@@ -598,7 +598,8 @@ def create_hdf5_opensees(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc
     tstep = tsteprange.step
     nstep = len(tsteprange)
     dt = tstep*essi_dt
-    
+    tend = max(nstep - 1, 0) * dt
+
     h5file = h5py.File(h5_fname, 'w')
     data_grp = h5file.create_group('DRM_Data')
     data_location = np.zeros(ncoord, dtype='i4')
@@ -618,7 +619,7 @@ def create_hdf5_opensees(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc
     data_grp = h5file.create_group('DRM_Metadata')
     dset = data_grp.create_dataset('dt', data=dt, dtype='f8')
     dset = data_grp.create_dataset('tstart', data=0.0, dtype='f8')
-    dset = data_grp.create_dataset('tend', data=nstep*dt, dtype='f8')
+    dset = data_grp.create_dataset('tend', data=tend, dtype='f8')
     
     h5file.close()
 
@@ -628,6 +629,7 @@ def create_hdf5_csv(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen
     tstep = tsteprange.step
     nstep = len(tsteprange)
     dt = tstep*essi_dt
+    tend = max(nstep - 1, 0) * dt
     
     print('Create HDF5 file with ', ncoord, ' coordinates, ', nstep, ' steps')
     if gen_vel:
@@ -642,7 +644,7 @@ def create_hdf5_csv(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen
 
     dset = h5file.create_dataset('dt', data=dt, dtype='f8')
     dset = h5file.create_dataset('tstart', data=0.0, dtype='f8')
-    dset = h5file.create_dataset('tend', data=nstep*dt, dtype='f8')
+    dset = h5file.create_dataset('tend', data=tend, dtype='f8')
     
     h5file.close()
 
@@ -945,9 +947,12 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     # ghost_cell = 0
     # do_interp = True
     do_interp = False
+    coord_x_rounded = np.rint(coord_x)
+    coord_y_rounded = np.rint(coord_y)
+    coord_z_rounded = np.rint(coord_z)
     for nid in range(0, n_coord):
         # if user_essi_x[nid] % essi_h != 0 or user_essi_y[nid] % essi_h != 0 or user_essi_z[nid] % essi_h != 0:
-        if not math.isclose(coord_x[nid], int(coord_x[nid])) or not math.isclose(coord_y[nid], int(coord_y[nid])) or not math.isclose(coord_z[nid], int(coord_z[nid])):
+        if not math.isclose(coord_x[nid], coord_x_rounded[nid], abs_tol=1e-8) or not math.isclose(coord_y[nid], coord_y_rounded[nid], abs_tol=1e-8) or not math.isclose(coord_z[nid], coord_z_rounded[nid], abs_tol=1e-8):
             do_interp = True
             # ghost_cell = 1
             if verbose and mpi_rank == 0:
@@ -1492,7 +1497,7 @@ def dframeToDict(dFrame):
     dFrame = list(dFrame.iterrows())
     return {i[1].to_list()[0] : i[1].to_list()[1] for i in dFrame}
 
-def convert_template(csv_fname, template_fname, ssi_fname, start_ts, end_ts, plot_only, mpi_rank, mpi_size, verbose):
+def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
     if mpi_rank == 0:
         print('Input  CSV [%s]' %csv_fname)
         print('Input ESSI [%s]' %ssi_fname)
@@ -1542,12 +1547,12 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_ts, end_ts, plo
     if verbose and mpi_rank == 0:
         print('Done read %d coordinates, first is (%d, %d, %d), last is (%d, %d, %d)' % (n_coord, user_x[0], user_y[0], user_z[0], user_x[-1], user_y[-1], user_z[-1]))
         print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x), np.max(user_x), np.min(user_y), np.max(user_y), np.min(user_z), np.max(user_z)) )
-        print('Start/end timestep', start_ts, end_ts)
-        
+        print('Start/end time', start_t, end_t)
+
     output_format = 'ESSI'
-        
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_ts, end_ts, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
-    return    
+
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    return
 
 if __name__ == "__main__":
   
@@ -1655,7 +1660,7 @@ if __name__ == "__main__":
     elif use_csv and not use_template:
         convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
-        convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, plotonly, mpi_rank, mpi_size, verbose)
+        convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
         
     if mpi_rank == 0:
         endTime = time.time()
