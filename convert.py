@@ -1627,8 +1627,8 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--csv", help="full path to the CSV setting file", default="")
     parser.add_argument("-d", "--drm", help="full path to the DRM file with node coordinates", default="")
     parser.add_argument("-h5", "--hdf5", help="full path to the hdf5 file with node coordinates", default="")
-    parser.add_argument("-e", "--essi", help="full path to the SW4 ESSI output file", default="")
-    parser.add_argument("-t", "--template", help="full path to the ESSI template file with node coordinates", default="")
+    parser.add_argument("-e", "--ssi", "--essi", dest="ssi", help="full path to the SW4 SSI output file", default="")
+    parser.add_argument("-t", "--template", help="full path to the SSI template file with node coordinates", default="")
     parser.add_argument("-p", "--plotonly", help="only generate plots of the input nodes", action="store_true")
     parser.add_argument("-r", "--reference", help="reference node coordinate offset, default 0 0 0", nargs='+', type=float)
     # parser.add_argument("-s", "--steprange", help="timestep range, default 0 total_steps", nargs='+', type=int)
@@ -1660,8 +1660,8 @@ if __name__ == "__main__":
     if args.template:
         template_fname=args.template
         use_template=True
-    if args.essi:
-        ssi_fname=args.essi
+    if args.ssi:
+        ssi_fname=args.ssi
     if args.reference:
         ref_coord[0]=args.reference[0]
         ref_coord[1]=args.reference[1]
@@ -1693,7 +1693,7 @@ if __name__ == "__main__":
         print('Error, no node coordinate input file is provided, exit...')
         exit(0)
     if ssi_fname == '':
-        print('Error, no SW4 ESSI output file is provided, exit...')
+        print('Error, no SW4 SSI output file is provided, exit...')
         exit(0) 
 
     if verbose and mpi_rank == 0:
