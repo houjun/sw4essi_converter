@@ -8,7 +8,6 @@ import h5py
 import math
 
 import scipy
-from scipy import integrate
 try:
   cumtrapz = scipy.integrate.cumulative_trapezoid
 except AttributeError:
@@ -393,11 +392,17 @@ def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose):
   h  = essiout['ESSI xyz grid spacing'][0]
   nt, nx, ny, nz = essiout['vel_0 ijk layout'].shape
   # print("essiout['vel_0 ijk layout'].shape: ", essiout['vel_0 ijk layout'].shape)
-  
+
+  if nx < 2 or ny < 2:
+    essiout.close()
+    raise ValueError('Topography-aware z interpolation requires at least 2 grid points in x and y.')
+
   # *) x, y indices
   # start
-  coord_x0 = coord_x.astype(int)
-  coord_y0 = coord_y.astype(int)
+  coord_x0 = np.floor(coord_x).astype(int)
+  coord_y0 = np.floor(coord_y).astype(int)
+  coord_x0 = np.clip(coord_x0, 0, nx-2)
+  coord_y0 = np.clip(coord_y0, 0, ny-2)
   # end
   coord_x1 = coord_x0 + 1
   coord_y1 = coord_y0 + 1
@@ -427,10 +432,14 @@ def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose):
     hi = zprofile_i[1] - zprofile_i[0]
     ind_z = find_value(zi, zprofile_i)
     # print('ind_z:', ind_z)
-    
+
     if ind_z == -1 or ind_z == nz:
-      print(f'Error getting z array location: ({h*coord_x[iz]:.2f}, {h*coord_y[iz]:.2f}, {zi:.2f}) not within SW4 domain!')
-      exit(0)
+      essiout.close()
+      raise ValueError(
+        f'Error getting z array location: '
+        f'({h*coord_x[iz]:.2f}, {h*coord_y[iz]:.2f}, {zi:.2f}) '
+        f'not within SW4 domain!'
+      )
     coord_z[iz] = ind_z + (zi-zprofile_i[ind_z])/hi
 
   essiout.close()
