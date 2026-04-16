@@ -204,30 +204,42 @@ def read_coord_drm(drm_filename, verbose):
         print('Reading coordinates from input file [%s]' % drm_filename)
 
     # Get the coordinates from DRM file
-    drm_file = h5py.File(drm_filename, 'r')
-    coordinates = drm_file['Coordinates']
+    with h5py.File(drm_filename, 'r') as drm_file:
+        coordinates = drm_file['Coordinates']
+        isboundary = drm_file['Is Boundary Node'][:]
 
-    isboundary = drm_file['Is Boundary Node'][:]
-    if coordinates.shape[1] == 1:
-        n_coord = int(coordinates.shape[0] / 3)
-    else: # coordinates.shape[1] == 3
-        n_coord = coordinates.shape[0]
+        if coordinates.ndim == 1:
+            if coordinates.shape[0] % 3 != 0:
+                raise ValueError('Coordinates dataset length must be divisible by 3 for 1D input')
+            n_coord = coordinates.shape[0] // 3
+        elif coordinates.shape[1] == 1:
+            if coordinates.shape[0] % 3 != 0:
+                raise ValueError('Coordinates dataset length must be divisible by 3 for single-column input')
+            n_coord = coordinates.shape[0] // 3
+        elif coordinates.shape[1] == 3:
+            n_coord = coordinates.shape[0]
+        else:
+            raise ValueError('Coordinates dataset must have shape (3*n,), (3*n, 1), or (n, 3)')
 
-    drm_x = np.zeros(n_coord, dtype='f8') # use float64 to avoid rounding-off error during crd manipulation (rotation, etc) later on
-    drm_y = np.zeros(n_coord, dtype='f8')
-    drm_z = np.zeros(n_coord, dtype='f8')
+        drm_x = np.zeros(n_coord, dtype='f8') # use float64 to avoid rounding-off error during crd manipulation (rotation, etc) later on
+        drm_y = np.zeros(n_coord, dtype='f8')
+        drm_z = np.zeros(n_coord, dtype='f8')
 
-    if coordinates.shape[1] == 1:
-        for i in range(0, n_coord):
-            drm_x[i] = coordinates[i*3]
-            drm_y[i] = coordinates[i*3+1]
-            drm_z[i] = coordinates[i*3+2]
-    else: # coordinates.shape[1] == 3
-        drm_x[:] = coordinates[:,0]
-        drm_y[:] = coordinates[:,1]
-        drm_z[:] = coordinates[:,2]
+        if coordinates.ndim == 1:
+            for i in range(0, n_coord):
+                drm_x[i] = coordinates[i*3]
+                drm_y[i] = coordinates[i*3+1]
+                drm_z[i] = coordinates[i*3+2]
+        elif coordinates.shape[1] == 1:
+            for i in range(0, n_coord):
+                drm_x[i] = coordinates[i*3, 0]
+                drm_y[i] = coordinates[i*3+1, 0]
+                drm_z[i] = coordinates[i*3+2, 0]
+        else: # coordinates.shape[1] == 3
+            drm_x[:] = coordinates[:,0]
+            drm_y[:] = coordinates[:,1]
+            drm_z[:] = coordinates[:,2]
 
-    drm_file.close()
     return drm_x, drm_y, drm_z, n_coord, isboundary
 
 def read_coord_h5(h5_filename, verbose):
@@ -235,34 +247,45 @@ def read_coord_h5(h5_filename, verbose):
         print('Reading coordinates from input file [%s]' % h5_filename)
 
     # Get the coordinates from h5 file
-    h5_file = h5py.File(h5_filename, 'r')
-    coordinates = h5_file['coordinate']
-    if coordinates.shape[1] == 1:
-        n_coord = int(coordinates.shape[0] / 3)
-    else: # coordinates.shape[1] == 3
-        n_coord = coordinates.shape[0]
+    with h5py.File(h5_filename, 'r') as h5_file:
+        coordinates = h5_file['coordinate']
+        if coordinates.ndim == 1:
+            if coordinates.shape[0] % 3 != 0:
+                raise ValueError('coordinate dataset length must be divisible by 3 for 1D input')
+            n_coord = coordinates.shape[0] // 3
+        elif coordinates.shape[1] == 1:
+            if coordinates.shape[0] % 3 != 0:
+                raise ValueError('coordinate dataset length must be divisible by 3 for single-column input')
+            n_coord = coordinates.shape[0] // 3
+        elif coordinates.shape[1] == 3:
+            n_coord = coordinates.shape[0]
+        else:
+            raise ValueError('coordinate dataset must have shape (3*n,), (3*n, 1), or (n, 3)')
 
-    h5_x = np.zeros(n_coord, dtype='f8') # use float64 to avoid rounding-off error during crd manipulation (rotation, etc) later on
-    h5_y = np.zeros(n_coord, dtype='f8')
-    h5_z = np.zeros(n_coord, dtype='f8')
-    nodeTags = h5_file['nodeTag'][:]
-    # print('h5_x.dtype: ', h5_x.dtype)
+        h5_x = np.zeros(n_coord, dtype='f8') # use float64 to avoid rounding-off error during crd manipulation (rotation, etc) later on
+        h5_y = np.zeros(n_coord, dtype='f8')
+        h5_z = np.zeros(n_coord, dtype='f8')
+        nodeTags = h5_file['nodeTag'][:]
+        # print('h5_x.dtype: ', h5_x.dtype)
 
-    if coordinates.shape[1] == 1:
-        for i in range(0, n_coord):
-            h5_x[i] = coordinates[i*3]
-            h5_y[i] = coordinates[i*3+1]
-            h5_z[i] = coordinates[i*3+2]
-    else: # coordinates.shape[1] == 3
-        # h5_x = coordinates[:,0] # use float32
-        # h5_y = coordinates[:,1]
-        # h5_z = coordinates[:,2]
-        h5_x[:] = coordinates[:,0] # use float64
-        h5_y[:] = coordinates[:,1]
-        h5_z[:] = coordinates[:,2]
+        if coordinates.ndim == 1:
+            for i in range(0, n_coord):
+                h5_x[i] = coordinates[i*3]
+                h5_y[i] = coordinates[i*3+1]
+                h5_z[i] = coordinates[i*3+2]
+        elif coordinates.shape[1] == 1:
+            for i in range(0, n_coord):
+                h5_x[i] = coordinates[i*3, 0]
+                h5_y[i] = coordinates[i*3+1, 0]
+                h5_z[i] = coordinates[i*3+2, 0]
+        else: # coordinates.shape[1] == 3
+            # h5_x = coordinates[:,0] # use float32
+            # h5_y = coordinates[:,1]
+            # h5_z = coordinates[:,2]
+            h5_x[:] = coordinates[:,0] # use float64
+            h5_y[:] = coordinates[:,1]
+            h5_z[:] = coordinates[:,2]
 
-    h5_file.close()
-    
     # print('h5_x.dtype: ', h5_x.dtype)
     return h5_x, h5_y, h5_z, n_coord, nodeTags
 
