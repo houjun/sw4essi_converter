@@ -226,16 +226,18 @@ def read_coord_h5(h5_filename, verbose):
     # Get the coordinates from h5 file
     h5_file = h5py.File(h5_filename, 'r')
     coordinates = h5_file['coordinate']
-    n_coord = coordinates.shape[0]
-    
+    if coordinates.shape[1] == 1:
+        n_coord = int(coordinates.shape[0] / 3)
+    else: # coordinates.shape[1] == 3
+        n_coord = coordinates.shape[0]
+
     h5_x = np.zeros(n_coord, dtype='f8') # use float64 to avoid rounding-off error during crd manipulation (rotation, etc) later on
     h5_y = np.zeros(n_coord, dtype='f8')
     h5_z = np.zeros(n_coord, dtype='f8')
     nodeTags = h5_file['nodeTag'][:]
     # print('h5_x.dtype: ', h5_x.dtype)
-    
+
     if coordinates.shape[1] == 1:
-        n_coord = int(coordinates.shape[0] / 3)
         for i in range(0, n_coord):
             h5_x[i] = coordinates[i*3]
             h5_y[i] = coordinates[i*3+1]
@@ -362,30 +364,6 @@ def get_essi_meta(ssi_fname, verbose):
     return x0, y0, z0, h, nx, ny, nz, nt, dt, timeseq, bTopo, zmin, zmax
 
 
-def find_value(val, array):
-    """
-    Given an `array`, and given a `value`, returns an index j such that `value` is between array[j]
-    and array[j+1]. `array` must be monotonic increasing. j=-1 or j=len(array) is returned
-    to indicate that `value` is out of range below and above respectively.
-    """
-    n = len(array)
-    if val < array[0]:
-        return -1
-    if val > array[-1]:
-        return n
-
-    # Binary search
-    jl, ju = 0, n - 1
-    while ju - jl > 1:
-        jm = (ju + jl) // 2
-        if val >= array[jm]:
-            jl = jm
-        else:
-            ju = jm
-
-    return jl
-
-
 def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose):
   ''' when topography is considered, get z array location based on its physical
       z coordinates in the interpolated vertical profile between the upper and lower z
@@ -393,11 +371,11 @@ def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose):
   '''
   with h5py.File(ssi_fname, 'r') as essiout:
     h  = essiout['ESSI xyz grid spacing'][0]
-    nt, nx, ny, nz = essiout['vel_0 ijk layout'].shape
+    _, nx, ny, nz = essiout['vel_0 ijk layout'].shape
     # print("essiout['vel_0 ijk layout'].shape: ", essiout['vel_0 ijk layout'].shape)
 
-    if nx < 2 or ny < 2:
-      raise ValueError('Topography-aware z interpolation requires at least 2 grid points in x and y.')
+    if nx < 2 or ny < 2 or nz < 2:
+      raise ValueError('Topography-aware z interpolation requires at least 2 grid points in x, y, and z.')
 
     # *) x, y indices
     # start
@@ -425,28 +403,36 @@ def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose):
     z_lower = zcrds[np.ix_(x_idx, y_idx)]
     z_lower_interp = interpn((x, y), z_lower, np.c_[coord_x, coord_y])
 
-    zprofile = np.linspace(z_upper_interp, z_lower_interp, num=nz)
+    z_span = z_lower_interp - z_upper_interp
+    zero_span = np.isclose(z_span, 0.0)
+    if np.any(zero_span):
+      iz = np.flatnonzero(zero_span)[0]
+      raise ValueError(
+        f'Error getting z array location: '
+        f'({h*coord_x[iz]:.2f}, {h*coord_y[iz]:.2f}, {user_essi_z[iz]:.2f}) '
+        f'has zero vertical span in the topography profile!'
+      )
 
-    # *）z array location
-    coord_z = np.zeros_like(coord_x)
-    for iz, zi in enumerate(user_essi_z):
-      zprofile_i = zprofile[:,iz]
-      hi = zprofile_i[1] - zprofile_i[0]
-      ind_z = find_value(zi, zprofile_i)
-      # print('ind_z:', ind_z)
+    z_min = np.minimum(z_upper_interp, z_lower_interp)
+    z_max = np.maximum(z_upper_interp, z_lower_interp)
+    tol = max(abs(h) * 1e-6, 1e-8)
+    out_of_range = (user_essi_z < z_min - tol) | (user_essi_z > z_max + tol)
+    if np.any(out_of_range):
+      iz = np.flatnonzero(out_of_range)[0]
+      raise ValueError(
+        f'Error getting z array location: '
+        f'({h*coord_x[iz]:.2f}, {h*coord_y[iz]:.2f}, {user_essi_z[iz]:.2f}) '
+        f'not within SW4 domain!'
+      )
 
-      if ind_z == -1 or ind_z == nz:
-        raise ValueError(
-          f'Error getting z array location: '
-          f'({h*coord_x[iz]:.2f}, {h*coord_y[iz]:.2f}, {zi:.2f}) '
-          f'not within SW4 domain!'
-        )
-      coord_z[iz] = ind_z + (zi-zprofile_i[ind_z])/hi
+    # The vertical profile is linear between the interpolated upper/lower interfaces.
+    coord_z = (user_essi_z - z_upper_interp) * (nz - 1) / z_span
+    coord_z = np.clip(coord_z, 0.0, nz - 1)
 
-  if verbose:
-    print('coord_z consider topography:', coord_z)
+    if verbose:
+      print('coord_z consider topography:', coord_z)
 
-  return coord_z
+    return coord_z
 
 
 def get_essi_data_btw_step(ssi_fname, start, end, verbose):
@@ -819,8 +805,17 @@ def linear_interp(data_dict, x, y, z):
     return result
 
 def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
-    if isinstance(zeroMotionDir, str) and zeroMotionDir.strip().lower() == 'no':
+    if zeroMotionDir is None or pd.isna(zeroMotionDir):
         zeroMotionDir = 'None'
+    elif isinstance(zeroMotionDir, str):
+        zeroMotionDir = zeroMotionDir.strip()
+        if zeroMotionDir == '' or zeroMotionDir.lower() in ('none', 'no'):
+            zeroMotionDir = 'None'
+    else:
+        zeroMotionDir = str(zeroMotionDir).strip()
+
+    if zeroMotionDir != 'None' and zeroMotionDir.upper() not in ('X', 'Y', 'Z'):
+        raise ValueError(f'Unsupported zeroMotionDir value: {zeroMotionDir}')
 
     # Read ESSI metadata
     essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, essi_nt, essi_dt, essi_timeseq, bTopo, zmin, zmax = get_essi_meta(ssi_fname, verbose)
@@ -927,7 +922,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
             debugfile = save_path + '/user_essi_xyz.npy'
             print('\tcheck user_essi_xyz (after rotation) in file \'{}\''.format(debugfile))
             np.save(debugfile, np.c_[user_essi_x, user_essi_y, user_essi_z])
-        exit(0)
+        raise SystemExit(1)
     
     if verbose and mpi_rank == 0:
         print('\t','Min/Max SW4 x:',essi_x0,essi_x0+essi_x_len_max,'Min/Max user x:',np.min(user_essi_x),np.max(user_essi_x))
