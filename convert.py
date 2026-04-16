@@ -9,9 +9,9 @@ import math
 
 import scipy
 try:
-  cumtrapz = scipy.integrate.cumulative_trapezoid
+    cumtrapz = scipy.integrate.cumulative_trapezoid
 except AttributeError:
-  cumtrapz = scipy.integrate.cumtrapz
+    cumtrapz = scipy.integrate.cumtrapz
 from scipy.interpolate import interpn
 
 
@@ -350,28 +350,37 @@ def rotate_coords_ops_xyplane(x, y, z, rotate_angle, ref_coord=[0,0,0]):
 
 def get_essi_meta(ssi_fname, verbose):
     # Get parameter values from HDF5 data
-    essiout = h5py.File(ssi_fname, 'r')
-    h  = essiout['ESSI xyz grid spacing'][0]
-    x0 = essiout['ESSI xyz origin'][0]
-    y0 = essiout['ESSI xyz origin'][1]
-    z0 = essiout['ESSI xyz origin'][2]
-    t0 = essiout['time start'][0]
-    dt = essiout['timestep'][0]
-    nt = essiout['vel_0 ijk layout'].shape[0]
-    nx = essiout['vel_0 ijk layout'].shape[1]
-    ny = essiout['vel_0 ijk layout'].shape[2]
-    nz = essiout['vel_0 ijk layout'].shape[3]
-    t1 = t0 + dt*(nt-1)
-    timeseq = np.linspace(t0, t1, nt)
-    # print('dt, t0, t1, timeseq =', dt, t0, t1, timeseq)
+    with h5py.File(ssi_fname, 'r') as essiout:
+        h  = essiout['ESSI xyz grid spacing'][0]
+        x0 = essiout['ESSI xyz origin'][0]
+        y0 = essiout['ESSI xyz origin'][1]
+        z0 = essiout['ESSI xyz origin'][2]
+        t0 = essiout['time start'][0]
+        dt = essiout['timestep'][0]
+        nt = essiout['vel_0 ijk layout'].shape[0]
+        nx = essiout['vel_0 ijk layout'].shape[1]
+        ny = essiout['vel_0 ijk layout'].shape[2]
+        nz = essiout['vel_0 ijk layout'].shape[3]
+        t1 = t0 + dt*(nt-1)
+        timeseq = np.linspace(t0, t1, nt)
+        # print('dt, t0, t1, timeseq =', dt, t0, t1, timeseq)
 
-    bTopo = False
-    zmin, zmax = z0, z0+(nz-1)*h
-    if 'z coordinates' in essiout:
-      bTopo = True
-      zmin, zmax = np.min(essiout['z coordinates'][:,:,0]), np.max(essiout['z coordinates'][:,:,-1])
-    essiout.close()
-    
+        bTopo = False
+        zmin, zmax = z0, z0+(nz-1)*h
+        if 'z coordinates' in essiout:
+            bTopo = True
+            zcoords = essiout['z coordinates']
+            chunk_x = zcoords.chunks[0] if zcoords.chunks else nx
+            chunk_y = zcoords.chunks[1] if zcoords.chunks else ny
+            zmin = np.inf
+            zmax = -np.inf
+            for ix in range(0, nx, chunk_x):
+                for iy in range(0, ny, chunk_y):
+                    upper = zcoords[ix:min(ix + chunk_x, nx), iy:min(iy + chunk_y, ny), 0]
+                    lower = zcoords[ix:min(ix + chunk_x, nx), iy:min(iy + chunk_y, ny), -1]
+                    zmin = min(zmin, float(np.min(upper)))
+                    zmax = max(zmax, float(np.max(lower)))
+
     return x0, y0, z0, h, nx, ny, nz, nt, dt, timeseq, bTopo, zmin, zmax
 
 
@@ -1546,8 +1555,8 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep
     template_file = h5py.File(template_fname)
     coordinates = template_file['Coordinates'][:]
     
-    node_tags = template_file['DRM Nodes'][:].tolist()
-    n_coord = len(node_tags)
+    is_boundary = template_file['Is Boundary Node'][:]
+    n_coord = len(is_boundary)
     user_x = np.zeros(n_coord)
     user_y = np.zeros(n_coord)
     user_z = np.zeros(n_coord)
@@ -1565,7 +1574,7 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep
 
     output_format = 'ESSI'
 
-    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
+    generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, is_boundary, extra_dname, output_format)
     return
 
 if __name__ == "__main__":
