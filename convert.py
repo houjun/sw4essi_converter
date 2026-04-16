@@ -130,7 +130,18 @@ def plot_cube(save_path, cube_definition, x, y, z, view):
     # ax.dist = 12
     #ax.set_aspect('equal')
     if hasattr(ax, 'set_box_aspect'):
-        ax.set_box_aspect(None, zoom=0.5)
+        box_aspect = (
+            max(x_plot_max - x_plot_min, 1e-12),
+            max(y_plot_max - y_plot_min, 1e-12),
+            max(z_plot_max - z_plot_min, 1e-12),
+        )
+        try:
+            ax.set_box_aspect(box_aspect, zoom=0.5)
+        except TypeError:
+            try:
+                ax.set_box_aspect(box_aspect)
+            except TypeError:
+                ax.dist = 12
     else:
         ax.dist = 12
     
@@ -1497,11 +1508,14 @@ def dframeToDict(dFrame):
     dFrame = list(dFrame.iterrows())
     return {i[1].to_list()[0] : i[1].to_list()[1] for i in dFrame}
 
-def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
+def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose, ref_coord=None):
     if mpi_rank == 0:
         print('Input  CSV [%s]' %csv_fname)
         print('Input ESSI [%s]' %ssi_fname)
-        
+
+    if ref_coord is None:
+        ref_coord = np.zeros(3)
+
     sw4ToESSI_params = dframeToDict(pd.read_csv(csv_fname))
     sw4_i_start = sw4ToESSI_params["sw4_i_start"]
     sw4_i_end   = sw4ToESSI_params["sw4_i_end"]
@@ -1660,7 +1674,7 @@ if __name__ == "__main__":
     elif use_csv and not use_template:
         convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
     elif use_csv and use_template:
-        convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
+        convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose, ref_coord)
         
     if mpi_rank == 0:
         endTime = time.time()
