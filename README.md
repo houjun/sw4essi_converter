@@ -55,9 +55,9 @@ Generate OpenSees DRM input from the checked-in sample files:
 ```bash
 mpirun -np 3 python convert.py \
   -d template/DRMTemplate.h5drm \
-  --ssi test/small.ssi \
+  --ssi tests/data/small.ssi \
   -c template/motion_setting.csv \
-  -P test/
+  -P tests/
 ```
 
 Generate motion histories from an HDF5 node file:
@@ -65,9 +65,9 @@ Generate motion histories from an HDF5 node file:
 ```bash
 mpirun -np 3 python convert.py \
   -h5 template/h5NodeCrds.h5 \
-  --ssi test/small.ssi \
+  --ssi tests/data/small.ssi \
   -c template/motion_setting.csv \
-  -P test/
+  -P tests/
 ```
 
 Generate plots only:
@@ -75,7 +75,7 @@ Generate plots only:
 ```bash
 mpirun -np 1 python convert.py \
   -d template/DRMTemplate.h5drm \
-  --ssi test/small.ssi \
+  --ssi tests/data/small.ssi \
   -c template/motion_setting.csv \
   -p
 ```
@@ -85,4 +85,4 @@ mpirun -np 1 python convert.py \
 - `template/DRMTemplate.h5drm`
 - `template/h5NodeCrds.h5`
 - `template/motion_setting.csv`
-- `test/small.ssi`
+- `tests/data/small.ssi`

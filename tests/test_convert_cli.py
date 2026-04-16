@@ -19,7 +19,7 @@ import convert
 
 class ConvertCliParserTests(unittest.TestCase):
     def setUp(self):
-        self.sample_ssi = REPO_ROOT / "test" / "small.ssi"
+        self.sample_ssi = REPO_ROOT / "tests" / "data" / "small.ssi"
         self.assertTrue(self.sample_ssi.exists(), f"Missing test fixture: {self.sample_ssi}")
         self.parser = convert.build_arg_parser()
 
