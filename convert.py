@@ -9,9 +9,9 @@ import math
 
 import scipy
 from scipy import integrate
-if int(scipy.__version__.split('.')[1]) >= 6: # the function was renamed in SciPy 1.6.0
+try:
   cumtrapz = scipy.integrate.cumulative_trapezoid
-else:
+except AttributeError:
   cumtrapz = scipy.integrate.cumtrapz
 from scipy.interpolate import interpn
 
@@ -193,16 +193,18 @@ def read_coord_drm(drm_filename, verbose):
     # Get the coordinates from DRM file
     drm_file = h5py.File(drm_filename, 'r')
     coordinates = drm_file['Coordinates']
-    
+
     isboundary = drm_file['Is Boundary Node'][:]
-    
+    if coordinates.shape[1] == 1:
+        n_coord = int(coordinates.shape[0] / 3)
+    else: # coordinates.shape[1] == 3
+        n_coord = coordinates.shape[0]
+
     drm_x = np.zeros(n_coord, dtype='f8') # use float64 to avoid rounding-off error during crd manipulation (rotation, etc) later on
     drm_y = np.zeros(n_coord, dtype='f8')
     drm_z = np.zeros(n_coord, dtype='f8')
-    
+
     if coordinates.shape[1] == 1:
-        n_coord = int(coordinates.shape[0] / 3)
-        
         for i in range(0, n_coord):
             drm_x[i] = coordinates[i*3]
             drm_y[i] = coordinates[i*3+1]
@@ -347,9 +349,9 @@ def get_essi_meta(ssi_fname, verbose):
     t1 = t0 + dt*(nt-1)
     timeseq = np.linspace(t0, t1, nt)
     # print('dt, t0, t1, timeseq =', dt, t0, t1, timeseq)
-    
+
     bTopo = False
-    zmin, zmax = z0, z0+nz*h
+    zmin, zmax = z0, z0+(nz-1)*h
     if 'z coordinates' in essiout:
       bTopo = True
       zmin, zmax = np.min(essiout['z coordinates'][:,:,0]), np.max(essiout['z coordinates'][:,:,-1])
@@ -382,7 +384,7 @@ def find_value(val, array):
     return jl
 
 
-def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z):
+def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose):
   ''' when topography is considered, get z array location based on its physical
       z coordinates in the interpolated vertical profile between the upper and lower z
       interfaces
@@ -402,16 +404,18 @@ def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z):
   coord_x1 = np.minimum(coord_x1, nx-1)
   coord_y1 = np.minimum(coord_y1, ny-1)
   # get distinct x, y values
-  x = list(set(coord_x0) | set(coord_x1)); x.sort()
-  y = list(set(coord_y0) | set(coord_y1)); y.sort()
+  x = np.array(sorted(set(coord_x0) | set(coord_x1)), dtype=int)
+  y = np.array(sorted(set(coord_y0) | set(coord_y1)), dtype=int)
+  x_idx = x - x[0]
+  y_idx = y - y[0]
 
   # *) interpolated z profile upper and lower z physical coordinates
   zcrds = essiout['z coordinates'][x[0]:x[-1]+1,y[0]:y[-1]+1,0] # upper interface
-  z_upper = zcrds[np.ix_(x-x[0], y-y[0])]
+  z_upper = zcrds[np.ix_(x_idx, y_idx)]
   z_upper_interp = interpn((x, y), z_upper, np.c_[coord_x, coord_y])
-  
+
   zcrds = essiout['z coordinates'][x[0]:x[-1]+1,y[0]:y[-1]+1,-1] # lower interface
-  z_lower = zcrds[np.ix_(x-x[0], y-y[0])]
+  z_lower = zcrds[np.ix_(x_idx, y_idx)]
   z_lower_interp = interpn((x, y), z_lower, np.c_[coord_x, coord_y])
 
   zprofile = np.linspace(z_upper_interp, z_lower_interp, num=nz)
@@ -430,8 +434,9 @@ def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z):
     coord_z[iz] = ind_z + (zi-zprofile_i[ind_z])/hi
 
   essiout.close()
-  
-  print('coord_z consider topography:', coord_z)
+
+  if verbose:
+    print('coord_z consider topography:', coord_z)
 
   return coord_z
 
@@ -596,7 +601,7 @@ def write_to_hdf5_range_2d(h5_fname, gname, dname, data, mystart, myend):
     h5file.close()
     
 def create_hdf5_opensees(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname):
-    tstart, tend, tstep = (tsteprange[0]+1)*essi_dt, (tsteprange[-1]+1)*essi_dt, tsteprange.step
+    tstep = tsteprange.step
     nstep = len(tsteprange)
     dt = tstep*essi_dt
     
@@ -615,18 +620,18 @@ def create_hdf5_opensees(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc
     dset = data_grp.create_dataset('data_location', data=data_location, dtype='i4')
     dset = data_grp.create_dataset(extra_dname, (ncoord,), dtype='i4')
     dset = data_grp.create_dataset('xyz', (ncoord, 3), dtype='f4')
-    
+
     data_grp = h5file.create_group('DRM_Metadata')
     dset = data_grp.create_dataset('dt', data=dt, dtype='f8')
-    dset = data_grp.create_dataset('tstart', data=dt, dtype='f8')
-    dset = data_grp.create_dataset('tend', data=tend - tstart + dt, dtype='f8')
+    dset = data_grp.create_dataset('tstart', data=0.0, dtype='f8')
+    dset = data_grp.create_dataset('tend', data=nstep*dt, dtype='f8')
     
     h5file.close()
 
 def create_hdf5_csv(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname):
 
     h5file = h5py.File(h5_fname, 'w')
-    tstart, tend, tstep = (tsteprange[0]+1)*essi_dt, (tsteprange[-1]+1)*essi_dt, tsteprange.step
+    tstep = tsteprange.step
     nstep = len(tsteprange)
     dt = tstep*essi_dt
     
@@ -640,13 +645,11 @@ def create_hdf5_csv(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen
 
     dset = h5file.create_dataset(extra_dname, (ncoord,), dtype='i4')
     dset = h5file.create_dataset('xyz', (ncoord, 3), dtype='f4')
-    
+
     # use array form [dt] instead of scalar dt, so that it has a shape and facilitate postprocessing
     dset = h5file.create_dataset('dt', data=[dt], dtype='f8')
-    # tstart = 0.0
-    # tend = nstep*dt
-    dset = h5file.create_dataset('tstart', data=[dt], dtype='f8')
-    dset = h5file.create_dataset('tend', data=[tend - tstart + dt], dtype='f8')
+    dset = h5file.create_dataset('tstart', data=[0.0], dtype='f8')
+    dset = h5file.create_dataset('tend', data=[nstep*dt], dtype='f8')
     
     h5file.close()
 
@@ -666,22 +669,13 @@ def create_hdf5_essi(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, ext
     
     h5file.close()
     
-# def coord_to_chunkid(x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z):
-#     val = int(np.floor(x/chk_x)*nchk_y*nchk_z + np.floor(y/chk_y)*nchk_z + np.floor(z/chk_z))
-#     #print('coord_to_chunkid:', x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, val)
-#     return val
 def coord_to_chunkid(x0, y0, z0, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, nx, ny, nz):
-    # Due to allocation of neighbor nodes, the indices may exceed the original dataset 
+    # Due to allocation of neighbor nodes, the indices may exceed the original dataset
     # boundary and thus need to be corrected so that the correct nearest chunk can be fetched later
     x, y, z = min(x0, nx-1), min(y0, ny-1), min(z0, nz-1)
-    
+
     val = int(np.floor(x/chk_x)*nchk_y*nchk_z + np.floor(y/chk_y)*nchk_z + np.floor(z/chk_z))
     #print('coord_to_chunkid:', x, y, z, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z, val)
-    
-    str_crd = coord_to_str_3d(x0, y0, z0)
-    if str_crd == '2900, 7100, 1':
-        print(f'{str_crd}: cid: {val}')
-      
     return val
 
 def chunkid_to_start(cid, chk_x, chk_y, chk_z, nchk_x, nchk_y, nchk_z):
@@ -818,6 +812,9 @@ def linear_interp(data_dict, x, y, z):
     return result
 
 def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, extra_data, extra_dname, output_format):
+    if isinstance(zeroMotionDir, str) and zeroMotionDir.strip().lower() == 'no':
+        zeroMotionDir = 'None'
+
     # Read ESSI metadata
     essi_x0, essi_y0, essi_z0, essi_h, essi_nx, essi_ny, essi_nz, essi_nt, essi_dt, essi_timeseq, bTopo, zmin, zmax = get_essi_meta(ssi_fname, verbose)
     essi_x_len_max = (essi_nx-1) * essi_h
@@ -863,7 +860,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     # TODO: here we use the middle crd in that direction by default
     user_x, user_y, user_z = user_x0, user_y0, user_z0
     # print(f'zeroMotionDir={zeroMotionDir}')
-    if zeroMotionDir not in ['None', 'No']:
+    if zeroMotionDir != 'None':
       middleCrd = None
       if zeroMotionDir.upper() == 'X':
         middleCrd = (np.amin(user_x0) + np.amax(user_x0)) / 2.
@@ -912,14 +909,14 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     # Check if all node coordinates are within the sw4 domain
     if np.min(user_essi_x) < essi_x0 or np.max(user_essi_x) > essi_x0+essi_x_len_max or \
        np.min(user_essi_y) < essi_y0 or np.max(user_essi_y) > essi_y0+essi_y_len_max or \
-       np.min(user_essi_z) < essi_z0 or np.max(user_essi_z) > essi_z0+essi_z_len_max:
+       np.min(user_essi_z) < zmin or np.max(user_essi_z) > zmax:
         if mpi_rank == 0:
             print('Error: all node coordinates (after rotation) should be within the sw4 domain for extracting the motion')
             print('while:')
             print('\t','Min/Max SW4 x:',essi_x0,essi_x0+essi_x_len_max,'Min/Max user x:',np.min(user_essi_x),np.max(user_essi_x))
             print('\t','Min/Max SW4 y:',essi_y0,essi_y0+essi_y_len_max,'Min/Max user y:',np.min(user_essi_y),np.max(user_essi_y))
-            print('\t','Min/Max SW4 z:',essi_z0,essi_z0+essi_z_len_max,'Min/Max user z:',np.min(user_essi_z),np.max(user_essi_z))
-            
+            print('\t','Min/Max SW4 z:',zmin,zmax,'Min/Max user z:',np.min(user_essi_z),np.max(user_essi_z))
+
             debugfile = save_path + '/user_essi_xyz.npy'
             print('\tcheck user_essi_xyz (after rotation) in file \'{}\''.format(debugfile))
             np.save(debugfile, np.c_[user_essi_x, user_essi_y, user_essi_z])
@@ -928,7 +925,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     if verbose and mpi_rank == 0:
         print('\t','Min/Max SW4 x:',essi_x0,essi_x0+essi_x_len_max,'Min/Max user x:',np.min(user_essi_x),np.max(user_essi_x))
         print('\t','Min/Max SW4 y:',essi_y0,essi_y0+essi_y_len_max,'Min/Max user y:',np.min(user_essi_y),np.max(user_essi_y))
-        print('\t','Min/Max SW4 z:',essi_z0,essi_z0+essi_z_len_max,'Min/Max user z:',np.min(user_essi_z),np.max(user_essi_z))
+        print('\t','Min/Max SW4 z:',zmin,zmax,'Min/Max user z:',np.min(user_essi_z),np.max(user_essi_z))
             
     # if mpi_rank == 0:
     #   print('while user_essi_xyz (after rotation) is:\n', np.c_[user_essi_x, user_essi_y, user_essi_z])
@@ -940,7 +937,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     if not bTopo:
       coord_z = (user_essi_z - essi_z0) / essi_h
     else:
-      coord_z = get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z)
+      coord_z = get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose)
     
     # Check if we actually need interpolation
     # ghost_cell = 0
@@ -951,9 +948,10 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         if not math.isclose(coord_x[nid], int(coord_x[nid])) or not math.isclose(coord_y[nid], int(coord_y[nid])) or not math.isclose(coord_z[nid], int(coord_z[nid])):
             do_interp = True
             # ghost_cell = 1
-            print(f'user_essi_x[{nid}], user_essi_y[{nid}], user_essi_z[{nid}]: {user_essi_x[nid]:.4f}, {user_essi_y[nid]:.4f}, {user_essi_z[nid]:.4f}')
+            if verbose and mpi_rank == 0:
+                print(f'user_essi_x[{nid}], user_essi_y[{nid}], user_essi_z[{nid}]: {user_essi_x[nid]:.4f}, {user_essi_y[nid]:.4f}, {user_essi_z[nid]:.4f}')
             # print(f'coord_x[{nid}], coord_y[{nid}], coord_z[{nid}]: {coord_x[nid]:.4e}, {coord_y[nid]:.4e}, {coord_z[nid]:.4e}')
-            break    
+            break
     if mpi_rank == 0:
       if do_interp:
         print('Use spline interpolation.')
@@ -1448,7 +1446,8 @@ def convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep,
     
     output_format = 'h5'
     # output_fname = save_path + '/' + output_format + 'NodeMotion.h5'
-    output_fname = save_path + '/' + os.path.basename(h5_fname)[:-3] + '_motion.h5'
+    output_stem = os.path.splitext(os.path.basename(h5_fname))[0]
+    output_fname = save_path + '/' + output_stem + '_motion.h5'
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
