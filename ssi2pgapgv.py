@@ -153,7 +153,7 @@ if __name__ == "__main__":
 
     my_shape = (my_count, out_ny)               # 1, 8
 
-    # print('Rank', mpi_rank, ', start', my_start, ', count', my_real_count, "outnx, ny", out_nx, out_ny, flush=True)
+    print('Rank', mpi_rank, ', start', my_start, ', count', my_real_count, "outnx, ny", out_nx, out_ny, flush=True)
 
     my_hpgv = np.zeros(my_shape)
     my_hpga = np.zeros(my_shape)
@@ -176,14 +176,17 @@ if __name__ == "__main__":
     #Start extracting and writing data
     i = 0
     ssifile = h5py.File(ssi_fname, 'r')
+    # Read only the first half of data for speedup
+    # ts_end = int(npts/2)
+    ts_end = int(npts)
     for x in range(0, nx, spacing):
         if x >= my_start*spacing and x < (my_start + my_real_count)*spacing:
             j = 0
             for y in range(0, ny, spacing):
 
-                data_vel_0 = ssifile['vel_0 ijk layout'][ :, x, y, : ].flatten()
-                data_vel_1 = ssifile['vel_1 ijk layout'][ :, x, y, : ].flatten()
-                data_vel_2 = ssifile['vel_2 ijk layout'][ :, x, y, : ].flatten()
+                data_vel_0 = ssifile['vel_0 ijk layout'][0:ts_end, x, y, : ].flatten()
+                data_vel_1 = ssifile['vel_1 ijk layout'][0:ts_end, x, y, : ].flatten()
+                data_vel_2 = ssifile['vel_2 ijk layout'][0:ts_end, x, y, : ].flatten()
 
                 data_acc_0 = np.gradient(data_vel_0, delta, axis=0)
                 data_acc_1 = np.gradient(data_vel_1, delta, axis=0)
@@ -197,6 +200,11 @@ if __name__ == "__main__":
                 acc_max_1 = np.max(np.absolute(data_acc_1))
                 acc_max_2 = np.max(np.absolute(data_acc_2))
 
+                if acc_max_0 > 30:
+                    print('x,y =', x, y, 'PGA_0', acc_max_0)
+                if acc_max_1 > 30:
+                    print('x,y =', x, y, 'PGA_1', acc_max_1)
+
                 my_hpgv[i,j] = max(vel_max_0, vel_max_1)
                 my_vpgv[i,j] = vel_max_2
                 my_hpga[i,j] = max(acc_max_0, acc_max_1)
@@ -205,10 +213,12 @@ if __name__ == "__main__":
                 # print('Rank', mpi_rank, 'local hpgv, xy =', x, y, 'ij =', i, j, ':', my_hpgv[i,j])
 
                 j+=1
+                if j % 10 == 0:
+                    print('Rank', mpi_rank, 'processed', i, j, datetime.now(), flush=True)
             # End for y
             i+=1
-            if i % 5 == 0:
-                print('Rank', mpi_rank, 'processed', i, 'x locations', my_real_count, flush=True)
+            # if i % 5 == 0:
+            #     print('Rank', mpi_rank, 'processed', i, 'x locations', my_real_count, flush=True)
         # End if x in range
     # End for x
     ssifile.close()

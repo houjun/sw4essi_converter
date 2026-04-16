@@ -8,3 +8,13 @@ Note.txt
 
 # VSCode
 .vscode
+
+# Local tooling and caches
+.codex
+.codex/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# HPC batch outputs
+o*.*
