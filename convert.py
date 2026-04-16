@@ -662,7 +662,10 @@ def write_to_hdf5_range_2d(h5_fname, gname, dname, data, mystart, myend):
     #print('mystart=%d, myend=%d' %(mystart, myend))
     dset[mystart:myend,:] = data[:,:]
     h5file.close()
-    
+
+def get_flat_coord_range(coord_offset, ncoord, width=3):
+    return coord_offset * width, (coord_offset + ncoord) * width
+
 def create_hdf5_opensees(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname):
     tstep = tsteprange.step
     nstep = len(tsteprange)
@@ -727,9 +730,9 @@ def create_hdf5_essi(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, ext
     if gen_dis:        
         dset = h5file.create_dataset('Displacements', (ncoord*3, nstep), dtype='f4')    
         
-    timeseq = np.linspace(0, nstep*dt, nstep+1)    
+    timeseq = np.arange(nstep, dtype='f8') * dt
 
-    h5file.create_dataset('Time', data=timeseq, dtype='i4')
+    h5file.create_dataset('Time', data=timeseq, dtype='f8')
     
     h5file.close()
     
@@ -1439,11 +1442,12 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
 
     elif output_format == "ESSI":
+        coords_start, coords_end = get_flat_coord_range(my_offset, my_ncoord[0])
         if mpi_rank == 0:
             create_hdf5_essi(output_fname, n_coord, nsteps, dt, gen_vel, gen_acc, gen_dis, extra_dname)    
             # Write to the template file
             if my_ncoord[0] > 0:
-                write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), my_offset, (my_offset+my_ncoord[0])*3)
+                write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), coords_start, coords_end)
                 write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
                 if gen_acc:
                     write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
@@ -1457,7 +1461,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         else:
             data = comm.recv(source=mpi_rank-1, tag=111)
             if my_ncoord[0] > 0:
-                write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), my_offset, (my_offset+my_ncoord[0])*3)
+                write_to_hdf5_range_1d(output_fname, '/', 'Coordinates', my_user_coordinates.reshape(my_ncoord[0]*3), coords_start, coords_end)
                 write_to_hdf5_range_1d(output_fname, '/', extra_dname, is_boundary, my_offset, my_offset+my_ncoord[0])   
                 if gen_acc:
                     write_to_hdf5_range(output_fname, '/', 'Accelerations', output_acc_all[:,tsteprange], my_offset*3, (my_offset+my_ncoord[0])*3)
