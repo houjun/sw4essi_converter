@@ -129,7 +129,10 @@ def plot_cube(save_path, cube_definition, x, y, z, view):
     
     # ax.dist = 12
     #ax.set_aspect('equal')
-    ax.set_box_aspect(None, zoom=0.5)
+    if hasattr(ax, 'set_box_aspect'):
+        ax.set_box_aspect(None, zoom=0.5)
+    else:
+        ax.dist = 12
     
     ax.text(cube_definition[2][0], cube_definition[2][1], cube_definition[2][2]-z_len*.05, 'SW4-ESSI domain', fontsize=7)
 
@@ -388,61 +391,57 @@ def get_coordz_topo(ssi_fname, coord_x, coord_y, user_essi_z, verbose):
       z coordinates in the interpolated vertical profile between the upper and lower z
       interfaces
   '''
-  essiout = h5py.File(ssi_fname, 'r')
-  h  = essiout['ESSI xyz grid spacing'][0]
-  nt, nx, ny, nz = essiout['vel_0 ijk layout'].shape
-  # print("essiout['vel_0 ijk layout'].shape: ", essiout['vel_0 ijk layout'].shape)
+  with h5py.File(ssi_fname, 'r') as essiout:
+    h  = essiout['ESSI xyz grid spacing'][0]
+    nt, nx, ny, nz = essiout['vel_0 ijk layout'].shape
+    # print("essiout['vel_0 ijk layout'].shape: ", essiout['vel_0 ijk layout'].shape)
 
-  if nx < 2 or ny < 2:
-    essiout.close()
-    raise ValueError('Topography-aware z interpolation requires at least 2 grid points in x and y.')
+    if nx < 2 or ny < 2:
+      raise ValueError('Topography-aware z interpolation requires at least 2 grid points in x and y.')
 
-  # *) x, y indices
-  # start
-  coord_x0 = np.floor(coord_x).astype(int)
-  coord_y0 = np.floor(coord_y).astype(int)
-  coord_x0 = np.clip(coord_x0, 0, nx-2)
-  coord_y0 = np.clip(coord_y0, 0, ny-2)
-  # end
-  coord_x1 = coord_x0 + 1
-  coord_y1 = coord_y0 + 1
-  coord_x1 = np.minimum(coord_x1, nx-1)
-  coord_y1 = np.minimum(coord_y1, ny-1)
-  # get distinct x, y values
-  x = np.array(sorted(set(coord_x0) | set(coord_x1)), dtype=int)
-  y = np.array(sorted(set(coord_y0) | set(coord_y1)), dtype=int)
-  x_idx = x - x[0]
-  y_idx = y - y[0]
+    # *) x, y indices
+    # start
+    coord_x0 = np.floor(coord_x).astype(int)
+    coord_y0 = np.floor(coord_y).astype(int)
+    coord_x0 = np.clip(coord_x0, 0, nx-2)
+    coord_y0 = np.clip(coord_y0, 0, ny-2)
+    # end
+    coord_x1 = coord_x0 + 1
+    coord_y1 = coord_y0 + 1
+    coord_x1 = np.minimum(coord_x1, nx-1)
+    coord_y1 = np.minimum(coord_y1, ny-1)
+    # get distinct x, y values
+    x = np.array(sorted(set(coord_x0) | set(coord_x1)), dtype=int)
+    y = np.array(sorted(set(coord_y0) | set(coord_y1)), dtype=int)
+    x_idx = x - x[0]
+    y_idx = y - y[0]
 
-  # *) interpolated z profile upper and lower z physical coordinates
-  zcrds = essiout['z coordinates'][x[0]:x[-1]+1,y[0]:y[-1]+1,0] # upper interface
-  z_upper = zcrds[np.ix_(x_idx, y_idx)]
-  z_upper_interp = interpn((x, y), z_upper, np.c_[coord_x, coord_y])
+    # *) interpolated z profile upper and lower z physical coordinates
+    zcrds = essiout['z coordinates'][x[0]:x[-1]+1,y[0]:y[-1]+1,0] # upper interface
+    z_upper = zcrds[np.ix_(x_idx, y_idx)]
+    z_upper_interp = interpn((x, y), z_upper, np.c_[coord_x, coord_y])
 
-  zcrds = essiout['z coordinates'][x[0]:x[-1]+1,y[0]:y[-1]+1,-1] # lower interface
-  z_lower = zcrds[np.ix_(x_idx, y_idx)]
-  z_lower_interp = interpn((x, y), z_lower, np.c_[coord_x, coord_y])
+    zcrds = essiout['z coordinates'][x[0]:x[-1]+1,y[0]:y[-1]+1,-1] # lower interface
+    z_lower = zcrds[np.ix_(x_idx, y_idx)]
+    z_lower_interp = interpn((x, y), z_lower, np.c_[coord_x, coord_y])
 
-  zprofile = np.linspace(z_upper_interp, z_lower_interp, num=nz)
-  
-  # *）z array location
-  coord_z = np.zeros_like(coord_x)
-  for iz, zi in enumerate(user_essi_z):
-    zprofile_i = zprofile[:,iz]
-    hi = zprofile_i[1] - zprofile_i[0]
-    ind_z = find_value(zi, zprofile_i)
-    # print('ind_z:', ind_z)
+    zprofile = np.linspace(z_upper_interp, z_lower_interp, num=nz)
 
-    if ind_z == -1 or ind_z == nz:
-      essiout.close()
-      raise ValueError(
-        f'Error getting z array location: '
-        f'({h*coord_x[iz]:.2f}, {h*coord_y[iz]:.2f}, {zi:.2f}) '
-        f'not within SW4 domain!'
-      )
-    coord_z[iz] = ind_z + (zi-zprofile_i[ind_z])/hi
+    # *）z array location
+    coord_z = np.zeros_like(coord_x)
+    for iz, zi in enumerate(user_essi_z):
+      zprofile_i = zprofile[:,iz]
+      hi = zprofile_i[1] - zprofile_i[0]
+      ind_z = find_value(zi, zprofile_i)
+      # print('ind_z:', ind_z)
 
-  essiout.close()
+      if ind_z == -1 or ind_z == nz:
+        raise ValueError(
+          f'Error getting z array location: '
+          f'({h*coord_x[iz]:.2f}, {h*coord_y[iz]:.2f}, {zi:.2f}) '
+          f'not within SW4 domain!'
+        )
+      coord_z[iz] = ind_z + (zi-zprofile_i[ind_z])/hi
 
   if verbose:
     print('coord_z consider topography:', coord_z)
@@ -655,10 +654,9 @@ def create_hdf5_csv(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen
     dset = h5file.create_dataset(extra_dname, (ncoord,), dtype='i4')
     dset = h5file.create_dataset('xyz', (ncoord, 3), dtype='f4')
 
-    # use array form [dt] instead of scalar dt, so that it has a shape and facilitate postprocessing
-    dset = h5file.create_dataset('dt', data=[dt], dtype='f8')
-    dset = h5file.create_dataset('tstart', data=[0.0], dtype='f8')
-    dset = h5file.create_dataset('tend', data=[nstep*dt], dtype='f8')
+    dset = h5file.create_dataset('dt', data=dt, dtype='f8')
+    dset = h5file.create_dataset('tstart', data=0.0, dtype='f8')
+    dset = h5file.create_dataset('tend', data=nstep*dt, dtype='f8')
     
     h5file.close()
 
