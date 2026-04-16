@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  cli-parser-test:
+  unit-tests:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,10 +19,46 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install MPI Runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openmpi-bin libopenmpi-dev
+
       - name: Install Test Dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy scipy h5py pandas matplotlib
+          python -m pip install numpy scipy h5py pandas matplotlib mpi4py hdf5plugin
 
-      - name: Run CLI Parser Test
-        run: python -m unittest tests.test_convert_cli
+      - name: Run Unit Tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Run MPI Fixture Conversion Test
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/mplconfig
+        run: |
+          mkdir -p "$MPLCONFIGDIR" "$RUNNER_TEMP/convert-out"
+          mpirun -n 1 python convert.py \
+            -h5 template/h5NodeCrds.h5 \
+            --ssi tests/data/small.ssi \
+            -c template/motion_setting.csv \
+            -P "$RUNNER_TEMP/convert-out"
+          python - <<'PY'
+          import os
+          import h5py
+          import numpy as np
+
+          output_path = os.path.join(os.environ["RUNNER_TEMP"], "convert-out", "h5NodeCrds_motion.h5")
+          reference_path = "tests/data/h5NodeMotion.h5"
+
+          with h5py.File(output_path, "r") as output_h5, h5py.File(reference_path, "r") as reference_h5:
+              np.testing.assert_allclose(output_h5["acceleration"][:], reference_h5["acceleration"][:])
+              np.testing.assert_allclose(output_h5["xyz"][:], reference_h5["xyz"][:])
+              np.testing.assert_array_equal(output_h5["nodeTag"][:], reference_h5["nodeTag"][:])
+              assert output_h5["velocity"].shape == (108, 600)
+              assert output_h5["displacement"].shape == (108, 600)
+
+              dt = float(output_h5["dt"][()])
+              tend = float(output_h5["tend"][()])
+              expected_tend = dt * (output_h5["acceleration"].shape[1] - 1)
+              assert abs(tend - expected_tend) < 1e-12
+          PY
