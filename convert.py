@@ -1565,7 +1565,7 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep
     # reference point, which is the ESSI or OpenSees origin in the SW4 coordinate system
     ref_coord[0] = essi_x_start
     ref_coord[1] = essi_y_start
-    ref_coord[2] = essi_z_end
+    ref_coord[2] = essi_z_start
         
     coord_sys = ['y', 'x', '-z']
     gen_vel = True
