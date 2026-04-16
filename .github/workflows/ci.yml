@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  cli-parser-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Test Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy h5py pandas matplotlib
+
+      - name: Run CLI Parser Test
+        run: python -m unittest tests.test_convert_cli

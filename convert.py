@@ -30,6 +30,32 @@ import functools
 print = functools.partial(print, flush=True) # Don't buffer print
 import hdf5plugin # Use this when SW4 output uses ZFP compression, can be installed with "pip install hdf5plugin"
 
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--csv", help="full path to the CSV setting file", default="")
+    parser.add_argument("-d", "--drm", help="full path to the DRM file with node coordinates", default="")
+    parser.add_argument("-h5", "--hdf5", help="full path to the hdf5 file with node coordinates", default="")
+    parser.add_argument("-e", "--ssi", "--essi", dest="ssi",
+                        help="full path to the SW4 SSI output file", default="")
+    parser.add_argument("-t", "--template",
+                        help="full path to the SSI template file with node coordinates", default="")
+    parser.add_argument("-p", "--plotonly", help="only generate plots of the input nodes", action="store_true")
+    parser.add_argument("-r", "--reference", help="reference node coordinate offset, default 0 0 0",
+                        nargs='+', type=float)
+    # parser.add_argument("-s", "--steprange", help="timestep range, default 0 total_steps", nargs='+', type=int)
+    parser.add_argument("-s", "--timerange",
+                        help="time range, will return all steps after the lower limit for equal upper and lower limit",
+                        nargs='+', type=int)
+    parser.add_argument("-R", "--rotateanlge", help="rotate angle for node coordinate and motion: [0, 360)",
+                        type=float)
+    parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
+    parser.add_argument("-P", "--savepath", help="full path for saving the result files", default="")
+    parser.add_argument("-z", "--zeroMotionDir",
+                        help="direction for zeroing out motion and enforce same motion across nodes in that direction: None(default), x, y, z",
+                        default="")
+    return parser
+
 # from scipy.signal import butter,filtfilt
 # def butter_lowpass_filter(data, cutoff, nyq, order):
 #     normal_cutoff = cutoff / nyq
@@ -1623,21 +1649,8 @@ if __name__ == "__main__":
     rotate_angle = 0
     zeroMotionDir = 'None'
     
-    parser=argparse.ArgumentParser()
-    parser.add_argument("-c", "--csv", help="full path to the CSV setting file", default="")
-    parser.add_argument("-d", "--drm", help="full path to the DRM file with node coordinates", default="")
-    parser.add_argument("-h5", "--hdf5", help="full path to the hdf5 file with node coordinates", default="")
-    parser.add_argument("-e", "--ssi", "--essi", dest="ssi", help="full path to the SW4 SSI output file", default="")
-    parser.add_argument("-t", "--template", help="full path to the SSI template file with node coordinates", default="")
-    parser.add_argument("-p", "--plotonly", help="only generate plots of the input nodes", action="store_true")
-    parser.add_argument("-r", "--reference", help="reference node coordinate offset, default 0 0 0", nargs='+', type=float)
-    # parser.add_argument("-s", "--steprange", help="timestep range, default 0 total_steps", nargs='+', type=int)
-    parser.add_argument("-s", "--timerange", help="time range, will return all steps after the lower limit for equal upper and lower limit", nargs='+', type=int)
-    parser.add_argument("-R", "--rotateanlge", help="rotate angle for node coordinate and motion: [0, 360)", type=float)
-    parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
-    parser.add_argument("-P", "--savepath", help="full path for saving the result files", default="")
-    parser.add_argument("-z", "--zeroMotionDir", help="direction for zeroing out motion and enforce same motion across nodes in that direction: None(default), x, y, z", default="")
-    args = parser.parse_args()  
+    parser = build_arg_parser()
+    args = parser.parse_args()
     
     if args.verbose:
         verbose=True
