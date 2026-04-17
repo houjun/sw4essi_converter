@@ -1580,7 +1580,9 @@ def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tste
         'drm', output_format, save_path, drm_fname, explicit_output_mode=requested_output_mode is not None
     )
     if output_format == 'essi':
-        prepare_essi_output_file(drm_fname, output_fname)
+        if mpi_rank == 0:
+            prepare_essi_output_file(drm_fname, output_fname)
+        MPI.COMM_WORLD.Barrier()
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, isboundary, extra_dname, output_format)
     
@@ -1718,7 +1720,9 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep
         'template', output_format, save_path, template_fname, explicit_output_mode=requested_output_mode is not None
     )
     if output_format == 'essi':
-        prepare_essi_output_file(template_fname, output_fname)
+        if mpi_rank == 0:
+            prepare_essi_output_file(template_fname, output_fname)
+        MPI.COMM_WORLD.Barrier()
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, is_boundary, extra_dname, output_format)
     return
