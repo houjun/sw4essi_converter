@@ -31,6 +31,10 @@ class ConvertCliParserTests(unittest.TestCase):
         args = self.parser.parse_args(["--essi", str(self.sample_ssi)])
         self.assertEqual(args.ssi, str(self.sample_ssi))
 
+    def test_output_format_flag_accepts_point_override(self):
+        args = self.parser.parse_args(["--ssi", str(self.sample_ssi), "--output-format", "point"])
+        self.assertEqual(args.output_format, "point")
+
 
 if __name__ == "__main__":
     unittest.main()

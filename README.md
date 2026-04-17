@@ -27,6 +27,11 @@ mpirun -np 4 python convert.py ...
 - `--csv`: read node coordinates from a CSV file and write `csvNodeMotion.h5`
 - `--csv` with `--template`: use a CSV mapping file together with an SSI template file
 
+When `--output-format` is omitted, the script keeps the current default for each input mode:
+- DRM input defaults to OpenSees DRM output
+- HDF5 and CSV inputs default to point-motion HDF5 output
+- CSV + template input defaults to ESSI template output
+
 ## Main Arguments
 
 ```text
@@ -35,6 +40,7 @@ mpirun -np 4 python convert.py ...
 -h5, --hdf5           HDF5 file with node coordinates
 -e,  --ssi            SW4 SSI output file
 -t,  --template       SSI template file
+-o,  --output-format  point, opensees, or essi
 -P,  --savepath       output directory
 -r,  --reference      reference coordinate offset
 -R,  --rotateanlge    rotation angle in degrees
@@ -47,6 +53,8 @@ mpirun -np 4 python convert.py ...
 Notes:
 - `--timerange start end step` is in SSI time units.
 - If `start == end`, the script keeps all steps from `start` to the end of the SSI record.
+- `--output-format point` is supported for DRM, HDF5, CSV, and template-driven inputs.
+- `--output-format opensees` and `--output-format essi` require input that carries boundary-node metadata, so they are only supported for DRM or template-driven inputs.
 
 ## Examples
 
@@ -67,6 +75,28 @@ mpirun -np 3 python convert.py \
   -h5 template/h5NodeCrds.h5 \
   --ssi tests/data/small.ssi \
   -c template/motion_setting.csv \
+  -P tests/
+```
+
+Force point-motion output explicitly from an HDF5 node file:
+
+```bash
+mpirun -np 3 python convert.py \
+  -h5 template/h5NodeCrds.h5 \
+  --ssi tests/data/small.ssi \
+  -c template/motion_setting.csv \
+  --output-format point \
+  -P tests/
+```
+
+Generate OpenSees DRM output from a template-driven run:
+
+```bash
+mpirun -np 3 python convert.py \
+  -c template/motion_setting.csv \
+  -t template/DRMTemplate.h5drm \
+  --ssi tests/data/small.ssi \
+  --output-format opensees \
   -P tests/
 ```
 
