@@ -1,6 +1,6 @@
-# SW4 SSI Converter
+# GEOtoENG
 
-Convert SW4 SSI output into motion files that can be used by OpenSees and related workflows.
+GEOtoENG converts SW4 SSI output into motion files that can be used by OpenSees and related workflows.
 
 The script reads an SSI HDF5 file, maps user node coordinates into the SW4 grid, optionally rotates or zeroes motion components, and writes truncated motion histories. ZFP-compressed SSI files are supported through `hdf5plugin`.
 
