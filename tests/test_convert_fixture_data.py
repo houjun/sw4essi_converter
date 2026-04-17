@@ -85,6 +85,61 @@ class ConvertFixtureDataTests(unittest.TestCase):
                 expected_tend = float(output_h5["dt"][()]) * (output_h5["acceleration"].shape[1] - 1)
                 self.assertAlmostEqual(float(output_h5["tend"][()]), expected_tend)
 
+    def test_convert_h5_accepts_explicit_point_output_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_coord, start_t, end_t, tstep, rotate_angle, zero_motion_dir = convert.get_csv_meta(
+                str(self.sample_csv)
+            )
+
+            convert.convert_h5(
+                str(self.sample_h5),
+                str(self.sample_ssi),
+                tmpdir,
+                ref_coord,
+                start_t,
+                end_t,
+                tstep,
+                rotate_angle,
+                zero_motion_dir,
+                False,
+                0,
+                1,
+                False,
+                requested_output_mode="point",
+            )
+
+            output_path = Path(tmpdir) / "h5NodeCrds_motion.h5"
+            self.assertTrue(output_path.exists(), f"Missing output file: {output_path}")
+
+            with h5py.File(output_path, "r") as output_h5, h5py.File(self.reference_output, "r") as reference_h5:
+                np.testing.assert_allclose(output_h5["acceleration"][:], reference_h5["acceleration"][:])
+                np.testing.assert_allclose(output_h5["xyz"][:], reference_h5["xyz"][:])
+                np.testing.assert_array_equal(output_h5["nodeTag"][:], reference_h5["nodeTag"][:])
+
+    def test_convert_h5_rejects_unsupported_essi_output_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_coord, start_t, end_t, tstep, rotate_angle, zero_motion_dir = convert.get_csv_meta(
+                str(self.sample_csv)
+            )
+
+            with self.assertRaisesRegex(ValueError, 'not supported for h5 input'):
+                convert.convert_h5(
+                    str(self.sample_h5),
+                    str(self.sample_ssi),
+                    tmpdir,
+                    ref_coord,
+                    start_t,
+                    end_t,
+                    tstep,
+                    rotate_angle,
+                    zero_motion_dir,
+                    False,
+                    0,
+                    1,
+                    False,
+                    requested_output_mode="essi",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

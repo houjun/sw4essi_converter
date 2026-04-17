@@ -2,6 +2,7 @@
 
 # from genericpath import exists
 import os
+import shutil
 # import sys
 import argparse
 import h5py
@@ -51,10 +52,74 @@ def build_arg_parser():
                         type=float)
     parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
     parser.add_argument("-P", "--savepath", help="full path for saving the result files", default="")
+    parser.add_argument(
+        "-o",
+        "--output-format",
+        dest="output_format",
+        choices=("point", "opensees", "essi"),
+        help="output format override: point motions, OpenSees DRM, or ESSI template output",
+        default=None,
+    )
     parser.add_argument("-z", "--zeroMotionDir",
                         help="direction for zeroing out motion and enforce same motion across nodes in that direction: None(default), x, y, z",
                         default="")
     return parser
+
+
+def resolve_output_mode(input_kind, requested_output_mode):
+    defaults = {
+        'drm': 'opensees',
+        'h5': 'point',
+        'csv': 'point',
+        'template': 'essi',
+    }
+    supported = {
+        'drm': {'point', 'opensees', 'essi'},
+        'h5': {'point'},
+        'csv': {'point'},
+        'template': {'point', 'opensees', 'essi'},
+    }
+
+    if requested_output_mode is None:
+        return defaults[input_kind]
+
+    output_mode = requested_output_mode.lower()
+    if output_mode not in supported[input_kind]:
+        supported_modes = ', '.join(sorted(supported[input_kind]))
+        raise ValueError(
+            f'Output format "{output_mode}" is not supported for {input_kind} input. '
+            f'Supported formats: {supported_modes}.'
+        )
+    return output_mode
+
+
+def get_output_filename(input_kind, output_mode, save_path, source_fname, explicit_output_mode=False):
+    if output_mode == 'opensees':
+        return os.path.join(save_path, 'OpenSeesDRMinput.h5drm')
+
+    if output_mode == 'point':
+        if input_kind == 'h5':
+            output_stem = os.path.splitext(os.path.basename(source_fname))[0]
+            return os.path.join(save_path, f'{output_stem}_motion.h5')
+        if input_kind == 'csv':
+            return os.path.join(save_path, 'csvNodeMotion.h5')
+        if input_kind == 'drm':
+            return os.path.join(save_path, 'drmNodeMotion.h5')
+        if input_kind == 'template':
+            output_stem = os.path.splitext(os.path.basename(source_fname))[0]
+            return os.path.join(save_path, f'{output_stem}_motion.h5')
+
+    if output_mode == 'essi':
+        if input_kind == 'template' and not explicit_output_mode:
+            return source_fname
+        return os.path.join(save_path, os.path.basename(source_fname))
+
+    raise ValueError(f'Unsupported output format: {output_mode}')
+
+
+def prepare_essi_output_file(source_fname, output_fname):
+    if os.path.abspath(source_fname) != os.path.abspath(output_fname):
+        shutil.copyfile(source_fname, output_fname)
 
 # from scipy.signal import butter,filtfilt
 # def butter_lowpass_filter(data, cutoff, nyq, order):
@@ -722,6 +787,10 @@ def create_hdf5_csv(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen
 
 def create_hdf5_essi(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
     h5file = h5py.File(h5_fname, 'r+')    
+
+    for dname in ('Velocity', 'Accelerations', 'Displacements', 'Time'):
+        if dname in h5file:
+            del h5file[dname]
     
     if gen_vel:
         dset = h5file.create_dataset('Velocity', (ncoord*3, nstep), dtype='f4')
@@ -1377,7 +1446,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     # Write coordinates and boundary nodes (file created previously), in serial with baton passing
     comm.Barrier()
     
-    if output_format == "OpenSees":
+    if output_format == "opensees":
         if mpi_rank == 0:
             create_hdf5_opensees(output_fname, n_coord, tsteprange, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
 
@@ -1409,7 +1478,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
 
-    elif output_format == "csv" or output_format == "h5":
+    elif output_format == "point":
         if mpi_rank == 0:
             create_hdf5_csv(output_fname, n_coord, tsteprange, essi_dt, gen_vel, gen_acc, gen_dis, extra_dname)    
 
@@ -1441,7 +1510,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
             if mpi_rank != mpi_size-1:
                 comm.send(my_ncoord, dest=mpi_rank+1, tag=11) 
 
-    elif output_format == "ESSI":
+    elif output_format == "essi":
         coords_start, coords_end = get_flat_coord_range(my_offset, my_ncoord[0])
         if mpi_rank == 0:
             create_hdf5_essi(output_fname, n_coord, nsteps, dt, gen_vel, gen_acc, gen_dis, extra_dname)    
@@ -1481,37 +1550,51 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
         print('Rank', mpi_rank, 'Finished writing data')    
     return
     
-def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
+def convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose, requested_output_mode=None):
     if mpi_rank == 0:
         print('Input  DRM [%s]' %drm_fname)
         print('Input ESSI [%s]' %ssi_fname)
 
     coord_sys = ['y', 'x', '-z']
+    output_format = resolve_output_mode('drm', requested_output_mode)
 
     # original unrotated node coordinates
     user_x0, user_y0, user_z0, n_coord, isboundary = read_coord_drm(drm_fname, verbose)  
+    isboundary = np.asarray(isboundary).reshape(-1)
     if verbose and mpi_rank == 0:
         print('Done read %d coordinates, first is (%d, %d, %d), last is (%d, %d, %d)' % (n_coord, user_x0[0], user_y0[0], user_z0[0], user_x0[-1], user_y0[-1], user_z0[-1]))
         print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x0), np.max(user_x0), np.min(user_y0), np.max(user_y0), np.min(user_z0), np.max(user_z0)) )
 
-    gen_vel = False
-    gen_dis = True
-    gen_acc = True
-    extra_dname = 'internal'
-    
-    output_format = 'OpenSees'
-    output_fname = save_path + '/' + output_format + 'DRMinput.h5drm'
+    if output_format == 'opensees':
+        gen_vel = False
+        gen_dis = True
+        gen_acc = True
+        extra_dname = 'internal'
+    else:
+        gen_vel = True
+        gen_dis = True
+        gen_acc = True
+        extra_dname = 'Is Boundary Node'
+
+    output_fname = get_output_filename(
+        'drm', output_format, save_path, drm_fname, explicit_output_mode=requested_output_mode is not None
+    )
+    if output_format == 'essi':
+        if mpi_rank == 0:
+            prepare_essi_output_file(drm_fname, output_fname)
+        MPI.COMM_WORLD.Barrier()
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, isboundary, extra_dname, output_format)
     
     return
 
-def convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
+def convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose, requested_output_mode=None):
     if mpi_rank == 0:
         print('Input h5   [%s]' %h5_fname)
         print('Input ESSI [%s]' %ssi_fname)
         
     coord_sys = ['y', 'x', '-z']
+    output_format = resolve_output_mode('h5', requested_output_mode)
     gen_vel = True
     gen_dis = True
     gen_acc = True  
@@ -1524,21 +1607,21 @@ def convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep,
     if mpi_rank == 0:
         print('Generating motions for %i nodes...' % (n_coord))
     
-    output_format = 'h5'
-    # output_fname = save_path + '/' + output_format + 'NodeMotion.h5'
-    output_stem = os.path.splitext(os.path.basename(h5_fname))[0]
-    output_fname = save_path + '/' + output_stem + '_motion.h5'
+    output_fname = get_output_filename(
+        'h5', output_format, save_path, h5_fname, explicit_output_mode=requested_output_mode is not None
+    )
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
     return            
         
-def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose):
+def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose, requested_output_mode=None):
     if mpi_rank == 0:
         print('Input  CSV [%s]' %csv_fname)
         print('Input ESSI [%s]' %ssi_fname)
         
     coord_sys = ['y', 'x', '-z']
+    output_format = resolve_output_mode('csv', requested_output_mode)
     gen_vel = True
     gen_dis = True
     gen_acc = True  
@@ -1559,8 +1642,9 @@ def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tste
     if mpi_rank == 0:
         print('Generating motions for %i nodes...' % (n_coord))
     
-    output_format = 'csv'
-    output_fname = save_path + '/' + output_format + 'NodeMotion.h5'
+    output_fname = get_output_filename(
+        'csv', output_format, save_path, csv_fname, explicit_output_mode=requested_output_mode is not None
+    )
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, user_z0, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir,gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, node_tags, extra_dname, output_format)
     
@@ -1570,13 +1654,15 @@ def dframeToDict(dFrame):
     dFrame = list(dFrame.iterrows())
     return {i[1].to_list()[0] : i[1].to_list()[1] for i in dFrame}
 
-def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose, ref_coord=None):
+def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plot_only, mpi_rank, mpi_size, verbose, ref_coord=None, requested_output_mode=None):
     if mpi_rank == 0:
         print('Input  CSV [%s]' %csv_fname)
         print('Input ESSI [%s]' %ssi_fname)
 
     if ref_coord is None:
         ref_coord = np.zeros(3)
+
+    output_format = resolve_output_mode('template', requested_output_mode)
 
     sw4ToESSI_params = dframeToDict(pd.read_csv(csv_fname))
     sw4_i_start = sw4ToESSI_params["sw4_i_start"]
@@ -1598,17 +1684,22 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep
     ref_coord[2] = essi_z_start
         
     coord_sys = ['y', 'x', '-z']
-    gen_vel = True
-    gen_dis = True
-    gen_acc = True 
-    extra_dname = 'Is Boundary Node'
+    if output_format == 'opensees':
+        gen_vel = False
+        gen_dis = True
+        gen_acc = True
+        extra_dname = 'internal'
+    else:
+        gen_vel = True
+        gen_dis = True
+        gen_acc = True 
+        extra_dname = 'Is Boundary Node'
 
     # original unrotated node coordinates
-    output_fname = template_fname
     template_file = h5py.File(template_fname)
     coordinates = template_file['Coordinates'][:]
     
-    is_boundary = template_file['Is Boundary Node'][:]
+    is_boundary = np.asarray(template_file['Is Boundary Node'][:]).reshape(-1)
     n_coord = len(is_boundary)
     user_x = np.zeros(n_coord)
     user_y = np.zeros(n_coord)
@@ -1625,7 +1716,13 @@ def convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep
         print('x, y, z (min/max): (%.0f, %.0f), (%.0f, %.0f), (%.0f, %.0f)' % (np.min(user_x), np.max(user_x), np.min(user_y), np.max(user_y), np.min(user_z), np.max(user_z)) )
         print('Start/end time', start_t, end_t)
 
-    output_format = 'ESSI'
+    output_fname = get_output_filename(
+        'template', output_format, save_path, template_fname, explicit_output_mode=requested_output_mode is not None
+    )
+    if output_format == 'essi':
+        if mpi_rank == 0:
+            prepare_essi_output_file(template_fname, output_fname)
+        MPI.COMM_WORLD.Barrier()
 
     generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x, user_y, user_z, n_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, gen_vel, gen_acc, gen_dis, verbose, plot_only, output_fname, mpi_rank, mpi_size, is_boundary, extra_dname, output_format)
     return
@@ -1652,6 +1749,7 @@ if __name__ == "__main__":
     tstep = 1
     rotate_angle = 0
     zeroMotionDir = 'None'
+    requested_output_mode = None
     
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -1693,6 +1791,8 @@ if __name__ == "__main__":
         save_path = args.savepath
     if args.zeroMotionDir:
         zeroMotionDir = args.zeroMotionDir
+    if args.output_format:
+        requested_output_mode = args.output_format
 
     comm = MPI.COMM_WORLD
     mpi_size = comm.Get_size()
@@ -1706,7 +1806,7 @@ if __name__ == "__main__":
         startTimeStr = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(startTime))
         print('Start time:', startTimeStr)
     
-    if drm_fname == '' and csv_fname == '' and template_fname == '':
+    if drm_fname == '' and h5_fname == '' and csv_fname == '' and template_fname == '':
         print('Error, no node coordinate input file is provided, exit...')
         exit(0)
     if ssi_fname == '':
@@ -1714,16 +1814,21 @@ if __name__ == "__main__":
         exit(0) 
 
     if verbose and mpi_rank == 0:
-      print('Using ref_coord={}, start_t={}, end_t={}, tstep={}, rotate_angle={} to extract motions'.format(ref_coord, start_t, end_t, tstep, rotate_angle))
+      print('Using ref_coord={}, start_t={}, end_t={}, tstep={}, rotate_angle={}, output_mode={} to extract motions'.format(ref_coord, start_t, end_t, tstep, rotate_angle, requested_output_mode or 'default'))
 
-    if use_drm:
-        convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
-    elif use_h5:
-        convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
-    elif use_csv and not use_template:
-        convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose)
-    elif use_csv and use_template:
-        convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose, ref_coord)
+    try:
+        if use_drm:
+            convert_drm(drm_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose, requested_output_mode)
+        elif use_h5:
+            convert_h5(h5_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose, requested_output_mode)
+        elif use_csv and not use_template:
+            convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose, requested_output_mode)
+        elif use_csv and use_template:
+            convert_template(csv_fname, template_fname, ssi_fname, start_t, end_t, tstep, rotate_angle, zeroMotionDir, plotonly, mpi_rank, mpi_size, verbose, ref_coord, requested_output_mode)
+    except ValueError as exc:
+        if mpi_rank == 0:
+            print(f'Error: {exc}')
+        raise SystemExit(1)
         
     if mpi_rank == 0:
         endTime = time.time()
