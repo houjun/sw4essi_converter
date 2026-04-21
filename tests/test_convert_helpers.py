@@ -26,11 +26,11 @@ class ConvertHelperTests(unittest.TestCase):
         self.assertEqual(convert.resolve_output_mode("csv", None), "point")
         self.assertEqual(convert.resolve_output_mode("template", None), "essi")
 
-    def test_resolve_output_mode_rejects_unsupported_input_output_pairs(self):
-        with self.assertRaisesRegex(ValueError, 'not supported for h5 input'):
-            convert.resolve_output_mode("h5", "essi")
-        with self.assertRaisesRegex(ValueError, 'not supported for csv input'):
-            convert.resolve_output_mode("csv", "opensees")
+    def test_resolve_output_mode_accepts_explicit_overrides_for_all_input_kinds(self):
+        self.assertEqual(convert.resolve_output_mode("h5", "essi"), "essi")
+        self.assertEqual(convert.resolve_output_mode("csv", "opensees"), "opensees")
+        with self.assertRaisesRegex(ValueError, "Supported formats"):
+            convert.resolve_output_mode("h5", "unsupported")
 
     def test_get_flat_coord_range_scales_node_offsets_by_xyz_width(self):
         self.assertEqual(convert.get_flat_coord_range(0, 2), (0, 6))
@@ -48,6 +48,10 @@ class ConvertHelperTests(unittest.TestCase):
         self.assertEqual(
             convert.get_output_filename("template", "essi", "/tmp/out", "/tmp/in/template.h5drm", explicit_output_mode=True),
             "/tmp/out/template.h5drm",
+        )
+        self.assertEqual(
+            convert.get_output_filename("csv", "essi", "/tmp/out", "/tmp/in/input.csv", explicit_output_mode=True),
+            "/tmp/out/input.h5",
         )
 
     def test_create_hdf5_essi_writes_float_time_axis_matching_motion_length(self):
