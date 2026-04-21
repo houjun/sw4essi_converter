@@ -132,14 +132,6 @@ def prepare_essi_output_file(source_fname, output_fname):
 #     y = filtfilt(b, a, data, axis=0, method="gust")
 #     return y
 
-# from scipy.signal import butter,filtfilt
-# def butter_lowpass_filter(data, cutoff, nyq, order):
-#     normal_cutoff = cutoff / nyq
-#     # Get the filter coefficients
-#     b, a = butter(order, normal_cutoff, btype='low', analog=False)
-#     y = filtfilt(b, a, data, axis=0, method="gust")
-#     return y
-
 # plot a 3D cube and grid points specified by x, y, z arrays
 def plot_cube(save_path, cube_definition, x, y, z, view):
     cube_definition_array = [
@@ -1048,8 +1040,6 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     # rotate/transform only when rotate_angle is other than 0 (default min difference is 1e-2)
     b_rotate = np.where(abs(rotate_angle) > 1e-2, True, False)
     if b_rotate: 
-        if verbose and mpi_rank == 0:
-            print(f'Rotate coordinates by {rotate_angle} degree around vertical axis (z) in the xy plane')
         user_x, user_y, user_z = rotate_coords_ops_xyplane(user_x, user_y, user_z, rotate_angle)
 
     # Convert user coordinate to sw4 coordinate, relative to ESSI domain (subset of SW4 domain)
@@ -1066,8 +1056,7 @@ def generate_acc_dis_time(ssi_fname, coord_sys, ref_coord, user_x0, user_y0, use
     #     tmpfile.write('(%d, %d, %d)' % (user_essi_x[i], user_essi_y[i], user_essi_z[i]))
     # print('user_essi_x.dtype: ', user_essi_x.dtype)
     # print('user_x0.dtype: ', user_x0.dtype)
-    # np.savetxt('tmp_user.txt', np.c_[user_x, user_y, user_z], fmt='%.6f')
-    # np.savetxt('tmp_essi.txt', np.c_[user_essi_x, user_essi_y, user_essi_z], fmt='%.6f')
+    # np.savetxt('tmp.txt', np.c_[user_essi_x, user_essi_y, user_essi_z], fmt='%.6f')
 
     # Plot
     if mpi_rank == 0:
