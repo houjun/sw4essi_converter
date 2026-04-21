@@ -221,6 +221,7 @@ class ConvertFixtureDataTests(unittest.TestCase):
             with h5py.File(output_path, "r") as output_h5, h5py.File(self.reference_output, "r") as reference_h5:
                 self.assertEqual(output_h5["DRM_Data"]["acceleration"].shape, (108, 600))
                 self.assertEqual(output_h5["DRM_Data"]["displacement"].shape, (108, 600))
+                self.assertNotIn("velocity", output_h5["DRM_Data"])
                 self.assertEqual(output_h5["DRM_Data"]["nodeTag"].shape, (36,))
                 self.assertEqual(output_h5["DRM_Data"]["xyz"].shape, (36, 3))
                 self.assertEqual(
@@ -261,6 +262,43 @@ class ConvertFixtureDataTests(unittest.TestCase):
                 self.assertEqual(output_h5["nodeTag"].shape, (36,))
                 self.assertEqual(output_h5["Velocity"].shape, (108, 600))
                 self.assertEqual(output_h5["Time"].shape, (600,))
+
+    def test_convert_csv_accepts_explicit_opensees_output_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "input.csv"
+            self._write_h5_based_csv_fixture(csv_path)
+            ref_coord, start_t, end_t, tstep, rotate_angle, zero_motion_dir = convert.get_csv_meta(str(csv_path))
+
+            convert.convert_csv(
+                str(csv_path),
+                str(self.sample_ssi),
+                tmpdir,
+                ref_coord,
+                start_t,
+                end_t,
+                tstep,
+                rotate_angle,
+                zero_motion_dir,
+                False,
+                0,
+                1,
+                False,
+                requested_output_mode="opensees",
+            )
+
+            output_path = Path(tmpdir) / "OpenSeesDRMinput.h5drm"
+            self.assertTrue(output_path.exists(), f"Missing output file: {output_path}")
+
+            with h5py.File(output_path, "r") as output_h5, h5py.File(self.reference_output, "r") as reference_h5:
+                self.assertEqual(output_h5["DRM_Data"]["acceleration"].shape, (108, 600))
+                self.assertEqual(output_h5["DRM_Data"]["displacement"].shape, (108, 600))
+                self.assertNotIn("velocity", output_h5["DRM_Data"])
+                self.assertEqual(output_h5["DRM_Data"]["nodeTag"].shape, (36,))
+                self.assertEqual(output_h5["DRM_Data"]["xyz"].shape, (36, 3))
+                self.assertEqual(
+                    float(output_h5["DRM_Metadata"]["dt"][()]),
+                    float(reference_h5["dt"][()]),
+                )
 
 
 if __name__ == "__main__":
