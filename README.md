@@ -53,8 +53,8 @@ When `--output-format` is omitted, the script keeps the current default for each
 Notes:
 - `--timerange start end step` is in SSI time units.
 - If `start == end`, the script keeps all steps from `start` to the end of the SSI record.
-- `--output-format point` is supported for DRM, HDF5, CSV, and template-driven inputs.
-- `--output-format opensees` and `--output-format essi` require input that carries boundary-node metadata, so they are only supported for DRM or template-driven inputs.
+- `--output-format point`, `--output-format opensees`, and `--output-format essi` are supported for DRM, HDF5, CSV, and template-driven inputs.
+- HDF5 and CSV inputs keep their `nodeTag` metadata when writing OpenSees or ESSI-style outputs.
 
 ## Examples
 

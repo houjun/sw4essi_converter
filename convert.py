@@ -112,7 +112,10 @@ def get_output_filename(input_kind, output_mode, save_path, source_fname, explic
     if output_mode == 'essi':
         if input_kind == 'template' and not explicit_output_mode:
             return source_fname
-        return os.path.join(save_path, os.path.basename(source_fname))
+        output_name = os.path.basename(source_fname)
+        if input_kind == 'csv':
+            output_name = f'{os.path.splitext(output_name)[0]}.h5'
+        return os.path.join(save_path, output_name)
 
     raise ValueError(f'Unsupported output format: {output_mode}')
 
@@ -794,7 +797,20 @@ def create_hdf5_csv(h5_fname, ncoord, tsteprange, essi_dt, gen_vel, gen_acc, gen
     h5file.close()
 
 def create_hdf5_essi(h5_fname, ncoord, nstep, dt, gen_vel, gen_acc, gen_dis, extra_dname):
-    h5file = h5py.File(h5_fname, 'r+')    
+    h5file = h5py.File(h5_fname, 'a')
+
+    coord_shape = (ncoord * 3,)
+    meta_shape = (ncoord,)
+
+    if 'Coordinates' in h5file and h5file['Coordinates'].shape != coord_shape:
+        del h5file['Coordinates']
+    if 'Coordinates' not in h5file:
+        h5file.create_dataset('Coordinates', coord_shape, dtype='f8')
+
+    if extra_dname in h5file and h5file[extra_dname].shape != meta_shape:
+        del h5file[extra_dname]
+    if extra_dname not in h5file:
+        h5file.create_dataset(extra_dname, meta_shape, dtype='i4')
 
     for dname in ('Velocity', 'Accelerations', 'Displacements', 'Time'):
         if dname in h5file:
@@ -1647,9 +1663,9 @@ def convert_csv(csv_fname, ssi_fname, save_path, ref_coord, start_t, end_t, tste
     df = pd.read_csv(csv_fname)
     node_tags = df['nodeTag'][:].tolist()
     n_coord = len(node_tags)
-    user_x0 = np.zeros(n_coord, dtype='f4')
-    user_y0 = np.zeros(n_coord, dtype='f4')
-    user_z0 = np.zeros(n_coord, dtype='f4')
+    user_x0 = np.zeros(n_coord, dtype='f8')
+    user_y0 = np.zeros(n_coord, dtype='f8')
+    user_z0 = np.zeros(n_coord, dtype='f8')
     for i in range(0, n_coord):
         user_x0[i] = df.loc[i, 'x']
         user_y0[i] = df.loc[i, 'y']
